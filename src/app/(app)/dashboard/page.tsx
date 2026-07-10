@@ -5,22 +5,29 @@ import { AlertTriangle, Store, Users, UsersRound } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
+import { subscribeUsers, type PlatformUser } from "@/lib/users";
 
 export default function DashboardPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [users, setUsers] = useState<PlatformUser[] | null>(null);
 
   useEffect(() => {
-    const unsub = subscribeGroups(setGroups, () => setGroups([]));
-    return unsub;
+    const unsubG = subscribeGroups(setGroups, () => setGroups([]));
+    const unsubU = subscribeUsers(setUsers, () => setUsers([]));
+    return () => {
+      unsubG();
+      unsubU();
+    };
   }, []);
 
-  const stats = useMemo(() => {
+  const groupStats = useMemo(() => {
     if (!groups) return null;
     return {
       escalations: groups.filter((g) => g.adminEscalationFlag !== null).length,
       active: groups.filter((g) => g.status === "active").length,
     };
   }, [groups]);
+  const userCount = users?.length;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -33,25 +40,25 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Escalations"
-          value={stats?.escalations}
+          value={groupStats?.escalations}
           icon={AlertTriangle}
           tone="text-red-600"
           description="Groups flagged for super-admin intervention."
-          highlight={(stats?.escalations ?? 0) > 0}
+          highlight={(groupStats?.escalations ?? 0) > 0}
         />
         <StatCard
           title="Active groups"
-          value={stats?.active}
+          value={groupStats?.active}
           icon={UsersRound}
           tone="text-blue-600"
           description="Tontines currently running across the platform."
         />
         <StatCard
           title="Registered users"
-          value={undefined}
+          value={userCount}
           icon={Users}
           tone="text-emerald-600"
-          description="Wired up in a follow-up."
+          description="Total accounts, including banned ones."
         />
         <StatCard
           title="Store applications"
