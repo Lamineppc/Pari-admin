@@ -1,56 +1,101 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, UsersRound, Users, Store } from "lucide-react";
+"use client";
 
-const cards = [
-  {
-    title: "Escalations",
-    description: "Groups flagged for super-admin intervention.",
-    icon: AlertTriangle,
-    tone: "text-red-600",
-  },
-  {
-    title: "Active groups",
-    description: "Tontines currently running across the platform.",
-    icon: UsersRound,
-    tone: "text-blue-600",
-  },
-  {
-    title: "Registered users",
-    description: "Total accounts, including inactive ones.",
-    icon: Users,
-    tone: "text-emerald-600",
-  },
-  {
-    title: "Store applications",
-    description: "Pending marketplace vendor requests.",
-    icon: Store,
-    tone: "text-amber-600",
-  },
-];
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Store, Users, UsersRound } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { subscribeGroups, type Group } from "@/lib/groups";
 
 export default function DashboardPage() {
+  const [groups, setGroups] = useState<Group[] | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeGroups(setGroups, () => setGroups([]));
+    return unsub;
+  }, []);
+
+  const stats = useMemo(() => {
+    if (!groups) return null;
+    return {
+      escalations: groups.filter((g) => g.adminEscalationFlag !== null).length,
+      active: groups.filter((g) => g.status === "active").length,
+    };
+  }, [groups]);
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          Platform overview. Cards will populate as sections are wired up.
+          Platform overview. Live totals from Firestore.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {cards.map((c) => (
-          <Card key={c.title}>
-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{c.title}</CardTitle>
-              <c.icon className={`h-4 w-4 ${c.tone}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold text-muted-foreground">—</div>
-              <CardDescription className="mt-1">{c.description}</CardDescription>
-            </CardContent>
-          </Card>
-        ))}
+        <StatCard
+          title="Escalations"
+          value={stats?.escalations}
+          icon={AlertTriangle}
+          tone="text-red-600"
+          description="Groups flagged for super-admin intervention."
+          highlight={(stats?.escalations ?? 0) > 0}
+        />
+        <StatCard
+          title="Active groups"
+          value={stats?.active}
+          icon={UsersRound}
+          tone="text-blue-600"
+          description="Tontines currently running across the platform."
+        />
+        <StatCard
+          title="Registered users"
+          value={undefined}
+          icon={Users}
+          tone="text-emerald-600"
+          description="Wired up in a follow-up."
+        />
+        <StatCard
+          title="Store applications"
+          value={undefined}
+          icon={Store}
+          tone="text-amber-600"
+          description="Wired up in a follow-up."
+        />
       </div>
     </div>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon: Icon,
+  tone,
+  description,
+  highlight = false,
+}: {
+  title: string;
+  value: number | undefined;
+  icon: typeof AlertTriangle;
+  tone: string;
+  description: string;
+  highlight?: boolean;
+}) {
+  return (
+    <Card className={highlight ? "border-red-300 dark:border-red-800" : undefined}>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className={`h-4 w-4 ${tone}`} />
+      </CardHeader>
+      <CardContent>
+        {value === undefined ? (
+          <Skeleton className="h-8 w-12" />
+        ) : (
+          <div className={`text-2xl font-semibold ${highlight ? "text-red-600" : ""}`}>
+            {value}
+          </div>
+        )}
+        <CardDescription className="mt-1">{description}</CardDescription>
+      </CardContent>
+    </Card>
   );
 }
