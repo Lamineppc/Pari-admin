@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X } from "lucide-react";
 import {
@@ -18,10 +18,14 @@ import {
   clearAdminEscalation,
   securedPhase,
   setGroupStatus,
+  subscribeLedger,
   takeOverAsCaretaker,
   transferOwnershipToManager,
   type Group,
+  type LedgerEntry,
+  type LedgerKind,
 } from "@/lib/groups";
+import { Badge } from "@/components/ui/badge";
 
 const PHASE_LABELS: Record<string, string> = {
   notStarted: "Not started",
@@ -52,6 +56,16 @@ export function GroupDetailSheet({
   const [busy, setBusy] = useState<
     "promote" | "status" | "clear" | "caretaker" | "cancel" | null
   >(null);
+  const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!group) {
+      setLedger(null);
+      return;
+    }
+    const unsub = subscribeLedger(group.id, setLedger, 25, () => setLedger([]));
+    return unsub;
+  }, [group?.id]);
 
   if (!group) return null;
 
@@ -208,9 +222,78 @@ export function GroupDetailSheet({
               {isActive ? "Deactivate group" : "Reactivate group"}
             </Button>
           </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Recent ledger
+            </div>
+            <LedgerList entries={ledger} currency={group.currency} />
+          </div>
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+const LEDGER_STYLES: Record<LedgerKind, string> = {
+  contribution:
+    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+  payout:
+    "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200",
+  refund:
+    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  penalty:
+    "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200",
+};
+
+function LedgerList({
+  entries,
+  currency,
+}: {
+  entries: LedgerEntry[] | null;
+  currency: string;
+}) {
+  if (entries === null) {
+    return <div className="text-xs text-muted-foreground">Loading ledger…</div>;
+  }
+  if (entries.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        No entries yet — the ledger fills as contributions, payouts, and refunds happen.
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      {entries.map((e) => (
+        <div
+          key={e.id}
+          className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2"
+        >
+          <div className="flex flex-1 flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={LEDGER_STYLES[e.kind]}>
+                {e.kind}
+              </Badge>
+              <span className="text-xs text-muted-foreground">cycle {e.cycleNumber}</span>
+            </div>
+            <div className="truncate text-xs text-muted-foreground" title={e.userId}>
+              {e.userId}
+            </div>
+            {e.note && (
+              <div className="truncate text-xs italic text-muted-foreground/80" title={e.note}>
+                {e.note}
+              </div>
+            )}
+          </div>
+          <div className="tabular-nums text-sm font-medium">
+            {currency} {e.amount.toLocaleString()}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -212,6 +213,68 @@ export async function takeOverAsCaretaker(groupId: string): Promise<void> {
   });
 
   await batch.commit();
+}
+
+// PR 6a — Append-only ledger entry per group. Kinds match the four money-flow
+// events surfaced by the mobile service. See lib/models/ledger_entry.dart.
+export type LedgerKind = "contribution" | "payout" | "refund" | "penalty";
+export type LedgerPhase =
+  | "active"
+  | "notStarted"
+  | "collateral"
+  | "distribution"
+  | "terminal"
+  | "closed";
+
+export type LedgerEntry = {
+  id: string;
+  kind: LedgerKind;
+  phase: LedgerPhase;
+  userId: string;
+  amount: number;
+  currency: string;
+  cycleNumber: number;
+  recordedBy: string;
+  createdAt: Date | null;
+  paymentId: string | null;
+  note: string | null;
+};
+
+function toLedgerEntry(snap: QueryDocumentSnapshot): LedgerEntry {
+  const d = snap.data();
+  return {
+    id: snap.id,
+    kind: (d.kind as LedgerKind | undefined) ?? "contribution",
+    phase: (d.phase as LedgerPhase | undefined) ?? "active",
+    userId: (d.userId as string | undefined) ?? "",
+    amount: Number(d.amount ?? 0),
+    currency: (d.currency as string | undefined) ?? "CFA",
+    cycleNumber: Number(d.cycleNumber ?? 0),
+    recordedBy: (d.recordedBy as string | undefined) ?? "",
+    createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
+    paymentId: (d.paymentId as string | undefined) ?? null,
+    note: (d.note as string | undefined) ?? null,
+  };
+}
+
+// Live stream of the group's ledger, newest first. Bounded by [max] to keep
+// the payload small; the audit UI paginates for older entries.
+export function subscribeLedger(
+  groupId: string,
+  cb: (entries: LedgerEntry[]) => void,
+  max: number = 25,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups", groupId, "ledger"),
+    orderBy("createdAt", "desc"),
+    limit(max),
+  );
+  return onSnapshot(
+    q,
+    (s) => cb(s.docs.map(toLedgerEntry)),
+    (err) => onError?.(err),
+  );
 }
 
 // PR 5c stub — Cancel the group and refund every member. Full implementation
