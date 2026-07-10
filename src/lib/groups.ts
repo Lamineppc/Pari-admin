@@ -13,7 +13,7 @@ import {
   type QueryDocumentSnapshot,
   type Timestamp,
 } from "firebase/firestore";
-import { firestore } from "./firebase";
+import { firebaseAuth, firestore } from "./firebase";
 
 // Mirrors the subset of lib/models/group_model.dart used by the admin panel.
 // Adminescalation* fields match PR 5b in the mobile repo.
@@ -38,6 +38,9 @@ export type Group = {
   adminEscalationFlag: AdminEscalationFlag | null;
   adminEscalationFlaggedAt: Date | null;
   adminEscalationReason: string | null;
+  // Set to the super admin's uid when a caretaker takeover happens
+  // (PR 5c). Null in normal operation.
+  caretakerBy: string | null;
   createdAt: Date | null;
 };
 
@@ -61,6 +64,7 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
     adminEscalationFlaggedAt:
       (d.adminEscalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
     adminEscalationReason: (d.adminEscalationReason as string | undefined) ?? null,
+    caretakerBy: (d.caretakerBy as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
@@ -149,4 +153,76 @@ export async function flagAdminEscalation(
     adminEscalationFlaggedAt: serverTimestamp(),
     adminEscalationReason: reason,
   });
+}
+
+// PR 5c — Super admin becomes the caretaker admin of a group whose primary
+// admin (and possibly manager) can no longer serve. Batch writes:
+//   • group.createdBy → super admin uid
+//   • group.caretakerBy → super admin uid (so surfaces can render a badge)
+//   • former admin's role → member
+//   • defaulted manager's role → member (only if flag = manager_default or
+//     both_default)
+//   • super admin's member doc → set with role=admin, caretaker=true,
+//     position=memberCount+1 (out of the payout rotation)
+//   • escalation flag fields → cleared
+// memberCount / memberIds are untouched so the payout math stays intact.
+export async function takeOverAsCaretaker(groupId: string): Promise<void> {
+  const superAdmin = firebaseAuth.currentUser;
+  if (!superAdmin) throw new Error("Not signed in.");
+
+  const groupRef = doc(firestore, "groups", groupId);
+  const membersCol = collection(firestore, "groups", groupId, "members");
+
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const data = groupSnap.data();
+  const formerAdminUid = (data.createdBy as string | undefined) ?? "";
+  const memberCount = Number(data.memberCount ?? 1);
+  const flag = data.adminEscalationFlag as AdminEscalationFlag | undefined;
+
+  const membersSnap = await getDocs(membersCol);
+  const managerDoc = membersSnap.docs.find((d) => d.data().role === "manager");
+  const managerUid = managerDoc?.id ?? null;
+
+  const batch = writeBatch(firestore);
+  batch.update(groupRef, {
+    createdBy: superAdmin.uid,
+    caretakerBy: superAdmin.uid,
+    adminEscalationFlag: deleteField(),
+    adminEscalationFlaggedAt: deleteField(),
+    adminEscalationReason: deleteField(),
+  });
+
+  if (formerAdminUid && formerAdminUid !== superAdmin.uid) {
+    batch.update(doc(membersCol, formerAdminUid), { role: "member" });
+  }
+
+  if ((flag === "manager_default" || flag === "both_default") && managerUid) {
+    batch.update(doc(membersCol, managerUid), { role: "member" });
+  }
+
+  batch.set(doc(membersCol, superAdmin.uid), {
+    userId: superAdmin.uid,
+    name: superAdmin.displayName || "Pari Support",
+    email: superAdmin.email || "",
+    role: "admin",
+    position: memberCount + 1,
+    joinedAt: serverTimestamp(),
+    caretaker: true,
+  });
+
+  await batch.commit();
+}
+
+// PR 5c stub — Cancel the group and refund every member. Full implementation
+// depends on the append-only ledger from PR 6a (needed to know exactly how
+// much each member has contributed) and the money layer from PR 6b–d
+// (needed to actually push refunds via Orange Money). Until those land, this
+// method throws with a message the UI can surface, so the button exists but
+// is honest about being deferred.
+export async function cancelAndRefundGroup(groupId: string): Promise<never> {
+  void groupId;
+  throw new Error(
+    "Cancel + refund needs PR 6a (ledger) and PR 6b–d (money layer). Coming soon.",
+  );
 }

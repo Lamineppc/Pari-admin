@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { PauseCircle, PlayCircle, ShieldCheck, X } from "lucide-react";
+import { PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -14,9 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { EscalationBadge } from "@/components/escalation-badge";
 import {
+  cancelAndRefundGroup,
   clearAdminEscalation,
   securedPhase,
   setGroupStatus,
+  takeOverAsCaretaker,
   transferOwnershipToManager,
   type Group,
 } from "@/lib/groups";
@@ -47,14 +49,24 @@ export function GroupDetailSheet({
   group: Group | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [busy, setBusy] = useState<"promote" | "status" | "clear" | null>(null);
+  const [busy, setBusy] = useState<
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | null
+  >(null);
 
   if (!group) return null;
 
   const isActive = group.status === "active";
   const phase = securedPhase(group);
+  const flag = group.adminEscalationFlag;
+  const isCaretaker = group.caretakerBy !== null;
+  const showCaretakerAction = flag === "admin_default" || flag === "both_default";
+  const showCancelAction = flag !== null;
 
-  async function run(kind: "promote" | "status" | "clear", fn: () => Promise<void>, ok: string) {
+  async function run(
+    kind: "promote" | "status" | "clear" | "caretaker" | "cancel",
+    fn: () => Promise<void>,
+    ok: string,
+  ) {
     setBusy(kind);
     try {
       await fn();
@@ -71,9 +83,14 @@ export function GroupDetailSheet({
     <Sheet open={!!group} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
+          <SheetTitle className="flex flex-wrap items-center gap-2">
             {group.name}
             {group.adminEscalationFlag && <EscalationBadge flag={group.adminEscalationFlag} />}
+            {isCaretaker && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+                <ShieldPlus className="h-3 w-3" /> Caretaker admin
+              </span>
+            )}
           </SheetTitle>
           <SheetDescription>
             {group.type === "secured" ? "Secured tontine" : "Traditional tontine"} — {group.description || "no description"}
@@ -120,7 +137,7 @@ export function GroupDetailSheet({
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Super-admin actions
             </div>
-            {group.adminEscalationFlag === "admin_default" && (
+            {flag === "admin_default" && (
               <Button
                 variant="default"
                 disabled={busy !== null}
@@ -135,7 +152,37 @@ export function GroupDetailSheet({
                 <ShieldCheck /> Promote manager to admin
               </Button>
             )}
-            {group.adminEscalationFlag && (
+            {showCaretakerAction && !isCaretaker && (
+              <Button
+                variant="default"
+                disabled={busy !== null}
+                onClick={() =>
+                  run(
+                    "caretaker",
+                    () => takeOverAsCaretaker(group.id),
+                    "You are now the caretaker admin.",
+                  )
+                }
+              >
+                <ShieldPlus /> Take over as caretaker admin
+              </Button>
+            )}
+            {showCancelAction && (
+              <Button
+                variant="destructive"
+                disabled={busy !== null}
+                onClick={() =>
+                  run(
+                    "cancel",
+                    () => cancelAndRefundGroup(group.id),
+                    "Group cancelled and members refunded.",
+                  )
+                }
+              >
+                <Ban /> Cancel + refund all members
+              </Button>
+            )}
+            {flag && (
               <Button
                 variant="outline"
                 disabled={busy !== null}

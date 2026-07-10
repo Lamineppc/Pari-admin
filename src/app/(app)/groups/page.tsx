@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { UsersRound, Search } from "lucide-react";
+import { UsersRound, Search, ShieldPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -121,6 +121,10 @@ export default function GroupsPage() {
                   <TableCell>
                     {g.adminEscalationFlag ? (
                       <EscalationBadge flag={g.adminEscalationFlag} />
+                    ) : g.caretakerBy ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+                        <ShieldPlus className="h-3 w-3" /> Caretaker
+                      </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
