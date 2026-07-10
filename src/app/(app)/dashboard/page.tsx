@@ -6,17 +6,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
 import { subscribeUsers, type PlatformUser } from "@/lib/users";
+import { subscribeStores, type Store as StoreDoc } from "@/lib/stores";
 
 export default function DashboardPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
+  const [stores, setStores] = useState<StoreDoc[] | null>(null);
 
   useEffect(() => {
     const unsubG = subscribeGroups(setGroups, () => setGroups([]));
     const unsubU = subscribeUsers(setUsers, () => setUsers([]));
+    const unsubS = subscribeStores(setStores, () => setStores([]));
     return () => {
       unsubG();
       unsubU();
+      unsubS();
     };
   }, []);
 
@@ -28,6 +32,7 @@ export default function DashboardPage() {
     };
   }, [groups]);
   const userCount = users?.length;
+  const pendingStores = stores?.filter((s) => s.status === "pending").length;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -62,10 +67,11 @@ export default function DashboardPage() {
         />
         <StatCard
           title="Store applications"
-          value={undefined}
+          value={pendingStores}
           icon={Store}
           tone="text-amber-600"
-          description="Wired up in a follow-up."
+          description="Marketplace vendors awaiting review."
+          highlight={(pendingStores ?? 0) > 0}
         />
       </div>
     </div>
