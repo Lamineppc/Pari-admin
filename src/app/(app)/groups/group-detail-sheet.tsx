@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, UserX, X, Wallet as WalletIcon } from "lucide-react";
+import { BarChart3, Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, UserX, X, Wallet as WalletIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   Sheet,
   SheetContent,
@@ -71,6 +72,7 @@ export function GroupDetailSheet({
   group: Group | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const router = useRouter();
   const [busy, setBusy] = useState<
     "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | null
   >(null);
@@ -562,8 +564,17 @@ export function GroupDetailSheet({
           <Separator />
 
           <div className="flex flex-col gap-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Recent ledger
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Recent ledger
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push(`/groups/${group.id}/money-flow`)}
+              >
+                <BarChart3 /> Full money-flow report
+              </Button>
             </div>
             <LedgerList entries={ledger} currency={group.currency} />
           </div>
