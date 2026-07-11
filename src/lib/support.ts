@@ -148,27 +148,96 @@ export async function createTicket(args: {
   return ref.id;
 }
 
+const STATUS_LABEL: Record<TicketStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+const PRIORITY_LABEL: Record<TicketPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
+async function notifyOwner(
+  userId: string,
+  subject: string,
+  ticketId: string,
+  type: string,
+  body: string,
+): Promise<void> {
+  await addDoc(collection(firestore, "users", userId, "notifications"), {
+    type,
+    title: `Support: ${subject}`,
+    body,
+    isRead: false,
+    createdAt: serverTimestamp(),
+    ticketId,
+  });
+}
+
 export async function setTicketStatus(
   ticketId: string,
   status: TicketStatus,
 ): Promise<void> {
-  await updateDoc(doc(firestore, COLLECTION, ticketId), {
+  const ref = doc(firestore, COLLECTION, ticketId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Ticket not found.");
+  const t = snap.data();
+  const prev = (t.status as TicketStatus | undefined) ?? "open";
+  if (prev === status) return;
+
+  await updateDoc(ref, {
     status,
     updatedAt: serverTimestamp(),
     ...(status === "resolved" || status === "closed"
       ? { resolvedAt: serverTimestamp() }
       : {}),
   });
+
+  const userId = (t.userId as string | undefined) ?? "";
+  const subject = (t.subject as string | undefined) ?? "";
+  if (userId) {
+    await notifyOwner(
+      userId,
+      subject,
+      ticketId,
+      "support_status",
+      `Status changed to ${STATUS_LABEL[status]}.`,
+    );
+  }
 }
 
 export async function setTicketPriority(
   ticketId: string,
   priority: TicketPriority,
 ): Promise<void> {
-  await updateDoc(doc(firestore, COLLECTION, ticketId), {
+  const ref = doc(firestore, COLLECTION, ticketId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Ticket not found.");
+  const t = snap.data();
+  const prev = (t.priority as TicketPriority | undefined) ?? "normal";
+  if (prev === priority) return;
+
+  await updateDoc(ref, {
     priority,
     updatedAt: serverTimestamp(),
   });
+
+  const userId = (t.userId as string | undefined) ?? "";
+  const subject = (t.subject as string | undefined) ?? "";
+  if (userId) {
+    await notifyOwner(
+      userId,
+      subject,
+      ticketId,
+      "support_priority",
+      `Priority set to ${PRIORITY_LABEL[priority]}.`,
+    );
+  }
 }
 
 export async function addInternalNote(
@@ -209,14 +278,7 @@ export async function replyToTicket(
   if (!userId) throw new Error("Ticket has no target user.");
 
   // Reply is a normal in-app notification that references the ticket.
-  await addDoc(collection(firestore, "users", userId, "notifications"), {
-    type: "support_reply",
-    title: `Support: ${subject}`,
-    body: body.trim(),
-    isRead: false,
-    createdAt: serverTimestamp(),
-    ticketId,
-  });
+  await notifyOwner(userId, subject, ticketId, "support_reply", body.trim());
 
   await updateDoc(ref, {
     lastReply: body.trim(),
