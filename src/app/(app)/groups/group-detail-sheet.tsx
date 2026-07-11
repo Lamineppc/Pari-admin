@@ -750,7 +750,7 @@ function surfaceEscalationDiagnostic(d: EscalationDiagnostic, _currency: string)
   switch (d.reason) {
     case "still_phase_1":
       toast.message(
-        `Still in Phase 1 (cycle ${d.currentCycle}/${d.memberCount}, halfway ${d.halfway}). Detector fires once cycle × 2 > memberCount.`,
+        `Still in Phase 1 (cycle ${d.currentCycle}/${d.memberCount}, halfway ${d.halfway}). Detector fires once currentCycle >= halfway (${d.halfway}).`,
       );
       return;
     case "no_delinquency":

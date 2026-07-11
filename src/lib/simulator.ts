@@ -138,7 +138,11 @@ export async function runEscalationDetector(
 
   if (g.type !== "secured") return { ...base, reason: "not_secured" };
   if (g.adminEscalationFlag) return { ...base, reason: "flag_already_set" };
-  if (currentCycle * 2 <= memberCount) return { ...base, reason: "still_phase_1" };
+  // Grace period ends when the last Phase 1 cycle has completed — i.e.,
+  // once currentCycle >= halfway. For N=4 that's cycle 2; for N=10 that's
+  // cycle 5. Firing later than that gives Phase 2 activity a free window
+  // before the flag can rise, which contradicts the spec.
+  if (currentCycle < halfway) return { ...base, reason: "still_phase_1" };
   if (halfway <= 0) return { ...base, reason: "still_phase_1" };
   const adminUid = (g.createdBy as string | undefined) ?? "";
   if (!adminUid) return { ...base, reason: "no_admin" };
