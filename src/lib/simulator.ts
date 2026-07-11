@@ -267,10 +267,12 @@ async function loadContext(groupId: string): Promise<{ group: Group; members: Si
     memberCount: Number(g.memberCount ?? 1),
     currentCycle: (g.currentCycle as number | null | undefined) ?? null,
     positionsLocked: Boolean(g.positionsLocked ?? false),
-    adminEscalationFlag: null,
+    adminEscalationFlag:
+      (g.adminEscalationFlag as Group["adminEscalationFlag"] | undefined) ?? null,
     adminEscalationFlaggedAt: null,
-    adminEscalationReason: null,
-    caretakerBy: null,
+    adminEscalationReason:
+      (g.adminEscalationReason as string | undefined) ?? null,
+    caretakerBy: (g.caretakerBy as string | undefined) ?? null,
     createdAt: null,
     moneyProvider: (g.moneyProvider as Group["moneyProvider"] | undefined) ?? null,
   };
@@ -294,6 +296,23 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
   const nextCycle = currentCycle + 1;
   if (currentCycle >= group.memberCount) {
     return { ready: false, reason: "Rotation already complete.", nextCycle, phase: "terminal", activeMembers: 0, activeMembersList: [], firstHalfRecipients: [], secondHalfRecipients: [] };
+  }
+  // A live escalation flag stops the rotation cold — the design says grace
+  // ends at Phase 2 start and the super admin must intervene BEFORE the
+  // pot pays anything. Simulator honors that: promote manager, take over,
+  // or dismiss the flag before the next cycle can run.
+  if (group.adminEscalationFlag) {
+    return {
+      ready: false,
+      reason:
+        `Escalation flag "${group.adminEscalationFlag}" is active — resolve it via the Super-admin actions above (Promote manager, Take over, or Dismiss) before running any more cycles.`,
+      nextCycle,
+      phase: "collateral",
+      activeMembers: 0,
+      activeMembersList: [],
+      firstHalfRecipients: [],
+      secondHalfRecipients: [],
+    };
   }
 
   // Observers (position 999, observer flag) are dropped in from the panel's

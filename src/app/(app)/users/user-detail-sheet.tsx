@@ -17,11 +17,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  exitSimulationEnvironment,
   setUserBan,
   setUserIsTestAccount,
   type BanType,
   type PlatformUser,
 } from "@/lib/users";
+import { LogOut } from "lucide-react";
 import {
   mockPaymentProvider,
   userWalletId,
@@ -39,7 +41,7 @@ export function UserDetailSheet({
 }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<
-    BanType | "restore" | "topup" | "toggle-test" | null
+    BanType | "restore" | "topup" | "toggle-test" | "exit-sim" | null
   >(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
@@ -79,6 +81,29 @@ export function UserDetailSheet({
             : "Access revoked.",
       );
       setReason("");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyExitSimulation() {
+    if (!user) return;
+    if (
+      !window.confirm(
+        `Remove ${user.name || user.email} from every mock group and flip isTestAccount back to false?`,
+      )
+    ) return;
+    setBusy("exit-sim");
+    try {
+      const n = await exitSimulationEnvironment(user.uid);
+      toast.success(
+        n > 0
+          ? `Removed from ${n} mock group(s) and reset to a real account.`
+          : "Reset to a real account. No mock-group memberships found.",
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg);
@@ -239,6 +264,22 @@ export function UserDetailSheet({
                     ? "Convert to real account"
                     : "Convert to test account"}
                 </Button>
+                {user.isTestAccount && (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={busy !== null}
+                      onClick={applyExitSimulation}
+                    >
+                      <LogOut /> Exit simulation environment
+                    </Button>
+                    <p className="text-[11px] text-muted-foreground">
+                      Removes this uid from every mock group&apos;s memberIds
+                      + member docs and flips isTestAccount back to false in
+                      one go.
+                    </p>
+                  </>
+                )}
               </div>
             </>
           )}

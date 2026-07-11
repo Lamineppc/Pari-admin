@@ -1,13 +1,17 @@
 import {
   addDoc,
+  arrayRemove,
   collection,
+  deleteDoc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   doc,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
@@ -86,6 +90,28 @@ export async function healMyProfileIfMissing(): Promise<boolean> {
     email: (me.email ?? "").toLowerCase(),
   });
   return true;
+}
+
+/** Removes [uid] from every mock group they were dropped into as an observer
+ *  and flips isTestAccount back to false. Handy for the super admin who
+ *  wired themselves into a simulation and now wants their real-user privacy
+ *  back. Returns the number of mock groups the user was leaving. */
+export async function exitSimulationEnvironment(uid: string): Promise<number> {
+  const mockGroupsSnap = await getDocs(
+    query(collection(firestore, "groups"), where("moneyProvider", "==", "mock")),
+  );
+  let count = 0;
+  for (const g of mockGroupsSnap.docs) {
+    const memberIds = (g.data().memberIds as string[] | undefined) ?? [];
+    if (!memberIds.includes(uid)) continue;
+    await updateDoc(g.ref, { memberIds: arrayRemove(uid) });
+    await deleteDoc(doc(firestore, "groups", g.id, "members", uid)).catch(
+      () => {},
+    );
+    count += 1;
+  }
+  await updateDoc(doc(firestore, "users", uid), { isTestAccount: false });
+  return count;
 }
 
 // Super-admin-only: flip a user between real and simulation-only. Firestore
