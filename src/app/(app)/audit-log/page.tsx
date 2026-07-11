@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  isAuditLoggingEnabled,
   subscribeAuditLog,
   type AuditEntry,
 } from "@/lib/audit";
@@ -26,6 +27,7 @@ export default function AuditLogPage() {
   const [q, setQ] = useState("");
   const [hideTest, setHideTest] = useState(false);
   const [hidePrelaunch, setHidePrelaunch] = useState(false);
+  const loggingOn = isAuditLoggingEnabled();
 
   useEffect(() => {
     const unsub = subscribeAuditLog(
@@ -127,6 +129,15 @@ export default function AuditLogPage() {
             <Download /> Export CSV
           </Button>
         </div>
+        {!loggingOn && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <span className="font-semibold">Audit logging is currently disabled.</span>{" "}
+            No new entries are being recorded. Flip
+            <code className="mx-1 rounded bg-amber-100 px-1 dark:bg-amber-900">NEXT_PUBLIC_AUDIT_LOG_ENABLED=true</code>
+            on Vercel and redeploy when real transactions are in the pipeline.
+            Existing entries (if any) are still visible below.
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-4 pt-2">
           <div className="relative max-w-sm flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

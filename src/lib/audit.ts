@@ -89,6 +89,18 @@ function currentPhase(): AuditPhase {
 }
 
 /**
+ * Master switch for audit writes. Off during the current messy testing
+ * phase so the log doesn't accumulate noise. Flip
+ * `NEXT_PUBLIC_AUDIT_LOG_ENABLED=true` on Vercel and redeploy when the
+ * platform is at "prelaunch test with real transactions in the pipeline"
+ * — that gives a clean starting point for the tamper-evident chain.
+ * Reads always work; only writes are gated.
+ */
+export function isAuditLoggingEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_AUDIT_LOG_ENABLED === "true";
+}
+
+/**
  * Records one action against the audit log. Best-effort: a failure here
  * never blocks the caller's actual operation — the audit is a follow-up
  * to a write that already committed, and swallowing errors keeps the
@@ -105,6 +117,7 @@ export async function writeAudit(args: {
   reason?: string | null;
   metadata?: Record<string, unknown> | null;
 }): Promise<void> {
+  if (!isAuditLoggingEnabled()) return; // master switch off — silent no-op
   const actor = firebaseAuth.currentUser;
   if (!actor) return; // no super admin session, nothing to record
   try {
