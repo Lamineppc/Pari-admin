@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Inbox, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Inbox, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -47,10 +47,12 @@ const STATUS_STYLES: Record<TicketStatus, string> = {
 };
 
 export default function SupportPage() {
+  const PAGE_SIZE = 15;
   const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "all">("all");
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     const unsub = subscribeTickets(setTickets, (e) => {
@@ -97,6 +99,20 @@ export default function SupportPage() {
     () => tickets?.find((t) => t.id === selectedId) ?? null,
     [tickets, selectedId],
   );
+
+  const totalPages = filtered ? Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)) : 1;
+  useEffect(() => {
+    if (page > totalPages - 1) setPage(0);
+  }, [page, totalPages]);
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, q]);
+
+  const pagedFiltered = useMemo(() => {
+    if (!filtered) return null;
+    const start = page * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -155,14 +171,14 @@ export default function SupportPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered === null && (
+            {pagedFiltered === null && (
               <TableRow>
                 <TableCell colSpan={6}>
                   <Skeleton className="h-6 w-full" />
                 </TableCell>
               </TableRow>
             )}
-            {filtered !== null && filtered.length === 0 && (
+            {pagedFiltered !== null && pagedFiltered.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={6}
@@ -172,7 +188,7 @@ export default function SupportPage() {
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((t) => (
+            {pagedFiltered?.map((t) => (
               <TableRow
                 key={t.id}
                 className="cursor-pointer"
@@ -218,6 +234,36 @@ export default function SupportPage() {
           </TableBody>
         </Table>
       </div>
+
+      {filtered && filtered.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-muted-foreground">
+            Showing {page * PAGE_SIZE + 1}–
+            {Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              <ChevronLeft /> Prev
+            </Button>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              Page {page + 1} / {totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            >
+              Next <ChevronRight />
+            </Button>
+          </div>
+        </div>
+      )}
 
       <TicketDetailSheet
         ticket={selected}
