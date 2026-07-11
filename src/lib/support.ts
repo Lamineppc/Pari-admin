@@ -96,8 +96,16 @@ export function subscribeTickets(
   );
   return onSnapshot(
     q,
-    (s) => cb(s.docs.map(toTicket)),
-    (err) => onError?.(err),
+    (s) => {
+      // eslint-disable-next-line no-console
+      console.log("[support] subscribeTickets snapshot size=", s.size, "empty=", s.empty);
+      cb(s.docs.map(toTicket));
+    },
+    (err) => {
+      // eslint-disable-next-line no-console
+      console.error("[support] subscribeTickets error", err.code, err.message);
+      onError?.(err);
+    },
   );
 }
 
