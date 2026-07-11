@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
-import { loadCyclePayments, wipeCycleData, type PaymentModel } from "@/lib/cycle-correction";
+import { isCycleWipeAllowed, loadCyclePayments, wipeCycleData, type PaymentModel } from "@/lib/cycle-correction";
 
 export default function CycleCorrectionPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -201,6 +201,13 @@ function GroupStep({
 }) {
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        <span className="font-semibold">Destructive wipe is blocked for live-money groups with real payments.</span>{" "}
+        Only mock groups (simulation) and never-started groups (currentCycle == 0)
+        can be wiped. Groups with real payments need a reversal action —
+        coming in a follow-up — that appends compensating entries instead of
+        deleting history.
+      </div>
       <div className="relative max-w-sm">
         <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -217,37 +224,61 @@ function GroupStep({
               <TableHead>Name</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Current cycle</TableHead>
+              <TableHead>Eligibility</TableHead>
               <TableHead className="text-right">Members</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {groups === null && (
               <TableRow>
-                <TableCell colSpan={4}>
+                <TableCell colSpan={5}>
                   <Skeleton className="h-6 w-full" />
                 </TableCell>
               </TableRow>
             )}
-            {groups?.map((g) => (
-              <TableRow
-                key={g.id}
-                onClick={() => onPick(g)}
-                className="cursor-pointer"
-              >
-                <TableCell className="font-medium">{g.name}</TableCell>
-                <TableCell>
-                  <Badge variant={g.type === "secured" ? "default" : "secondary"}>
-                    {g.type}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {g.currentCycle ?? 0} / {g.memberCount}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {g.memberCount}
-                </TableCell>
-              </TableRow>
-            ))}
+            {groups?.map((g) => {
+              const gate = isCycleWipeAllowed({
+                moneyProvider: g.moneyProvider,
+                currentCycle: g.currentCycle,
+              });
+              return (
+                <TableRow
+                  key={g.id}
+                  onClick={gate.allowed ? () => onPick(g) : undefined}
+                  className={
+                    gate.allowed
+                      ? "cursor-pointer"
+                      : "cursor-not-allowed opacity-60"
+                  }
+                  title={gate.reason ?? undefined}
+                >
+                  <TableCell className="font-medium">{g.name}</TableCell>
+                  <TableCell>
+                    <Badge variant={g.type === "secured" ? "default" : "secondary"}>
+                      {g.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {g.currentCycle ?? 0} / {g.memberCount}
+                  </TableCell>
+                  <TableCell>
+                    {gate.allowed ? (
+                      <Badge variant="secondary">Eligible</Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                      >
+                        Live — reversal only
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {g.memberCount}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>

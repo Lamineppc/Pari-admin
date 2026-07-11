@@ -66,27 +66,61 @@ export async function loadCyclePayments(
   });
 }
 
+/** Returns whether a group is eligible for a destructive cycle wipe.
+ *  Two cases are allowed:
+ *   * Mock groups — the whole point of the mock is that we can wipe things.
+ *   * Groups that have never started (currentCycle is 0 or null) — no member
+ *     money has moved yet, so there's nothing to destroy.
+ *  Anything else is a live-money group with real payment history; wipe is
+ *  refused and the super admin has to use the reversal flow (adds
+ *  compensating entries, keeps history intact) — build lands in the next
+ *  commit. */
+export function isCycleWipeAllowed(
+  g: Pick<{ moneyProvider: string | null; currentCycle: number | null }, "moneyProvider" | "currentCycle">,
+): { allowed: boolean; reason?: string } {
+  if (g.moneyProvider === "mock") return { allowed: true };
+  const c = g.currentCycle ?? 0;
+  if (c <= 0) return { allowed: true };
+  return {
+    allowed: false,
+    reason:
+      "This group has real payments recorded. Destructive wipe is blocked to preserve member history. Use the reversal flow instead (coming next).",
+  };
+}
+
 /** Wipes every payment record for the given cycle, clears payoutCycle on
  *  members who were paid that cycle, and resets the group's currentCycle
- *  back to that number. Returns counts so the confirmation toast can
- *  surface what actually changed. */
+ *  back to that number. Refuses to run on live-money groups that already
+ *  have payment history — that path requires reversal, not deletion. */
 export async function wipeCycleData(
   groupId: string,
   cycleNumber: number,
 ): Promise<{ paymentsDeleted: number; membersUnpaid: number }> {
   const groupRef = doc(firestore, "groups", groupId);
+  const groupBefore = await getDoc(groupRef);
+  if (!groupBefore.exists()) throw new Error("Group not found.");
+  const groupData = groupBefore.data() as {
+    moneyProvider?: string | null;
+    currentCycle?: number | null;
+    name?: string;
+  };
+  const gate = isCycleWipeAllowed({
+    moneyProvider: groupData.moneyProvider ?? null,
+    currentCycle: groupData.currentCycle ?? null,
+  });
+  if (!gate.allowed) {
+    throw new Error(
+      `"${groupData.name ?? groupId}": ${gate.reason ?? "Destructive wipe blocked."}`,
+    );
+  }
+  const isTest = groupData.moneyProvider === "mock";
+
   const paymentsCol = collection(firestore, "groups", groupId, "payments");
   const membersCol = collection(firestore, "groups", groupId, "members");
-
   const [paymentSnap, memberSnap] = await Promise.all([
     getDocs(query(paymentsCol, where("cycleNumber", "==", cycleNumber))),
     getDocs(query(membersCol, where("payoutCycle", "==", cycleNumber))),
   ]);
-
-  const groupBefore = await getDoc(groupRef);
-  const isTest =
-    (groupBefore.data() as { moneyProvider?: string } | undefined)
-      ?.moneyProvider === "mock";
 
   const batch = writeBatch(firestore);
   for (const d of paymentSnap.docs) batch.delete(d.ref);
