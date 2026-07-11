@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, ChevronRight, Search, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronRight, RotateCcw, Search, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -13,20 +13,31 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { subscribeGroups, type Group } from "@/lib/groups";
-import { isCycleWipeAllowed, loadCyclePayments, wipeCycleData, type PaymentModel } from "@/lib/cycle-correction";
+import {
+  isCycleWipeAllowed,
+  loadCycleLedger,
+  loadCyclePayments,
+  reverseLedgerEntry,
+  wipeCycleData,
+  type LedgerEntryRecord,
+  type PaymentModel,
+} from "@/lib/cycle-correction";
+
+type Mode = "wipe" | "reverse";
 
 export default function CycleCorrectionPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [mode, setMode] = useState<Mode>("wipe");
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Group | null>(null);
   const [cycle, setCycle] = useState<number | null>(null);
-  const [payments, setPayments] = useState<PaymentModel[] | null>(null);
-  const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -48,48 +59,20 @@ export default function CycleCorrectionPage() {
     );
   }, [groups, q]);
 
-  useEffect(() => {
-    if (step !== 2 || !selected || cycle == null) return;
-    setPayments(null);
-    loadCyclePayments(selected.id, cycle).then(setPayments).catch((e) => {
-      toast.error(e instanceof Error ? e.message : String(e));
-      setPayments([]);
-    });
-  }, [step, selected, cycle]);
-
   function reset() {
     setStep(0);
     setSelected(null);
     setCycle(null);
-    setPayments(null);
-    setConfirmText("");
+    setMode("wipe");
   }
 
   function back() {
     if (step === 2) {
       setStep(1);
       setCycle(null);
-      setPayments(null);
-      setConfirmText("");
     } else if (step === 1) {
       setStep(0);
       setSelected(null);
-    }
-  }
-
-  async function apply() {
-    if (!selected || cycle == null) return;
-    setBusy(true);
-    try {
-      const r = await wipeCycleData(selected.id, cycle);
-      toast.success(
-        `Wiped ${r.paymentsDeleted} payment(s) and unpaid ${r.membersUnpaid} member(s). currentCycle reset to ${cycle}.`,
-      );
-      reset();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -105,10 +88,9 @@ export default function CycleCorrectionPage() {
               Cycle correction
             </h1>
             <p className="text-sm text-muted-foreground">
-              Wipe every payment record for a specific cycle, unpay any
-              members marked paid that cycle, and roll the group back to
-              that cycle number. Irreversible — use only when a rotation
-              is broken and needs a manual reset.
+              Two paths: destructive wipe (mock / never-started groups only)
+              and reversal (live-money groups — appends compensating ledger
+              entries without deleting history).
             </p>
           </div>
         </div>
@@ -117,7 +99,11 @@ export default function CycleCorrectionPage() {
           <ChevronRight className="h-3 w-3" />
           <StepIndicator active={step === 1} completed={step > 1} label="2 · Pick cycle" />
           <ChevronRight className="h-3 w-3" />
-          <StepIndicator active={step === 2} completed={false} label="3 · Confirm + wipe" />
+          <StepIndicator
+            active={step === 2}
+            completed={false}
+            label={mode === "wipe" ? "3 · Confirm + wipe" : "3 · Pick + reverse entry"}
+          />
         </div>
       </header>
 
@@ -132,8 +118,9 @@ export default function CycleCorrectionPage() {
           groups={filtered}
           q={q}
           onQ={setQ}
-          onPick={(g) => {
+          onPick={(g, m) => {
             setSelected(g);
+            setMode(m);
             setStep(1);
           }}
         />
@@ -142,6 +129,7 @@ export default function CycleCorrectionPage() {
       {step === 1 && selected && (
         <CycleStep
           group={selected}
+          mode={mode}
           onPick={(c) => {
             setCycle(c);
             setStep(2);
@@ -149,15 +137,23 @@ export default function CycleCorrectionPage() {
         />
       )}
 
-      {step === 2 && selected && cycle != null && (
-        <ConfirmStep
+      {step === 2 && selected && cycle != null && mode === "wipe" && (
+        <ConfirmWipeStep
           group={selected}
           cycle={cycle}
-          payments={payments}
-          confirmText={confirmText}
-          onConfirmText={setConfirmText}
           busy={busy}
-          onApply={apply}
+          onDone={reset}
+          setBusy={setBusy}
+        />
+      )}
+
+      {step === 2 && selected && cycle != null && mode === "reverse" && (
+        <ReverseStep
+          group={selected}
+          cycle={cycle}
+          busy={busy}
+          onDone={reset}
+          setBusy={setBusy}
         />
       )}
     </div>
@@ -197,16 +193,17 @@ function GroupStep({
   groups: Group[] | null;
   q: string;
   onQ: (v: string) => void;
-  onPick: (g: Group) => void;
+  onPick: (g: Group, mode: Mode) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
-        <span className="font-semibold">Destructive wipe is blocked for live-money groups with real payments.</span>{" "}
-        Only mock groups (simulation) and never-started groups (currentCycle == 0)
-        can be wiped. Groups with real payments need a reversal action —
-        coming in a follow-up — that appends compensating entries instead of
-        deleting history.
+      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+        <span className="font-semibold">Wipe vs reverse.</span>{" "}
+        Mock groups and never-started groups (currentCycle == 0) go through
+        the destructive wipe path. Live-money groups with real payments go
+        through the reversal path — pick a specific ledger entry and the
+        panel appends a compensating entry with a negated amount, keeping
+        the original intact.
       </div>
       <div className="relative max-w-sm">
         <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -224,7 +221,7 @@ function GroupStep({
               <TableHead>Name</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Current cycle</TableHead>
-              <TableHead>Eligibility</TableHead>
+              <TableHead>Path</TableHead>
               <TableHead className="text-right">Members</TableHead>
             </TableRow>
           </TableHeader>
@@ -241,16 +238,12 @@ function GroupStep({
                 moneyProvider: g.moneyProvider,
                 currentCycle: g.currentCycle,
               });
+              const groupMode: Mode = gate.allowed ? "wipe" : "reverse";
               return (
                 <TableRow
                   key={g.id}
-                  onClick={gate.allowed ? () => onPick(g) : undefined}
-                  className={
-                    gate.allowed
-                      ? "cursor-pointer"
-                      : "cursor-not-allowed opacity-60"
-                  }
-                  title={gate.reason ?? undefined}
+                  onClick={() => onPick(g, groupMode)}
+                  className="cursor-pointer"
                 >
                   <TableCell className="font-medium">{g.name}</TableCell>
                   <TableCell>
@@ -263,13 +256,13 @@ function GroupStep({
                   </TableCell>
                   <TableCell>
                     {gate.allowed ? (
-                      <Badge variant="secondary">Eligible</Badge>
+                      <Badge variant="secondary">Wipe (eligible)</Badge>
                     ) : (
                       <Badge
                         variant="outline"
-                        className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+                        className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
                       >
-                        Live — reversal only
+                        Reverse (live money)
                       </Badge>
                     )}
                   </TableCell>
@@ -288,9 +281,11 @@ function GroupStep({
 
 function CycleStep({
   group,
+  mode,
   onPick,
 }: {
   group: Group;
+  mode: Mode;
   onPick: (n: number) => void;
 }) {
   const current = group.currentCycle ?? 0;
@@ -298,11 +293,11 @@ function CycleStep({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Pick which cycle to wipe on <span className="font-medium">{group.name}</span>.
-        Wiping cycle N deletes every payment record with cycleNumber == N and
-        resets group.currentCycle back to N. That means cycles N+1 and later
-        (if any) will also effectively be forgotten until fresh payments get
-        recorded.
+        Pick which cycle to {mode === "wipe" ? "wipe" : "inspect for reversal"}{" "}
+        on <span className="font-medium">{group.name}</span>.
+        {mode === "wipe"
+          ? " Wiping cycle N deletes every payment record with cycleNumber == N and resets group.currentCycle back to N."
+          : " You'll see every ledger entry recorded on this cycle and choose which one to compensate."}
       </p>
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
         {cycles.map((c) => (
@@ -321,25 +316,48 @@ function CycleStep({
   );
 }
 
-function ConfirmStep({
+function ConfirmWipeStep({
   group,
   cycle,
-  payments,
-  confirmText,
-  onConfirmText,
   busy,
-  onApply,
+  setBusy,
+  onDone,
 }: {
   group: Group;
   cycle: number;
-  payments: PaymentModel[] | null;
-  confirmText: string;
-  onConfirmText: (v: string) => void;
   busy: boolean;
-  onApply: () => void;
+  setBusy: (b: boolean) => void;
+  onDone: () => void;
 }) {
+  const [payments, setPayments] = useState<PaymentModel[] | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+
+  useEffect(() => {
+    setPayments(null);
+    loadCyclePayments(group.id, cycle).then(setPayments).catch((e) => {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setPayments([]);
+    });
+  }, [group.id, cycle]);
+
   const expected = `${group.name} cycle ${cycle}`;
   const canConfirm = confirmText.trim() === expected;
+
+  async function apply() {
+    setBusy(true);
+    try {
+      const r = await wipeCycleData(group.id, cycle);
+      toast.success(
+        `Wiped ${r.paymentsDeleted} payment(s) and unpaid ${r.membersUnpaid} member(s). currentCycle reset to ${cycle}.`,
+      );
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900 dark:bg-red-950/40">
@@ -406,7 +424,7 @@ function ConfirmStep({
         <Input
           id="confirm"
           value={confirmText}
-          onChange={(e) => onConfirmText(e.target.value)}
+          onChange={(e) => setConfirmText(e.target.value)}
           placeholder={expected}
         />
       </div>
@@ -414,9 +432,259 @@ function ConfirmStep({
       <Button
         variant="destructive"
         disabled={!canConfirm || busy}
-        onClick={onApply}
+        onClick={apply}
       >
         {busy ? "Wiping…" : `Wipe cycle ${cycle} on ${group.name}`}
+      </Button>
+    </div>
+  );
+}
+
+const KIND_STYLES: Record<string, string> = {
+  contribution: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
+  payout: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200",
+  refund: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200",
+  penalty: "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200",
+};
+
+function ReverseStep({
+  group,
+  cycle,
+  busy,
+  setBusy,
+  onDone,
+}: {
+  group: Group;
+  cycle: number;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  onDone: () => void;
+}) {
+  const [entries, setEntries] = useState<LedgerEntryRecord[] | null>(null);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [clearPayout, setClearPayout] = useState(true);
+
+  useEffect(() => {
+    setEntries(null);
+    setPickedId(null);
+    setReason("");
+    loadCycleLedger(group.id, cycle)
+      .then(setEntries)
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : String(e));
+        setEntries([]);
+      });
+  }, [group.id, cycle]);
+
+  const picked = useMemo(
+    () => entries?.find((e) => e.id === pickedId) ?? null,
+    [entries, pickedId],
+  );
+
+  const alreadyReversedIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of entries ?? []) {
+      if (e.reversesEntryId) s.add(e.reversesEntryId);
+    }
+    return s;
+  }, [entries]);
+
+  async function apply() {
+    if (!picked) return;
+    setBusy(true);
+    try {
+      const isTest = group.moneyProvider === "mock";
+      const r = await reverseLedgerEntry({
+        groupId: group.id,
+        original: picked,
+        reason,
+        clearMemberPayoutCycle: clearPayout && picked.kind === "payout",
+        isTest,
+      });
+      toast.success(`Reversal recorded (${r.reversalEntryId}).`);
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canApply = !!picked && reason.trim().length > 0;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/40">
+        <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-200">
+          <RotateCcw className="h-4 w-4" />
+          Non-destructive reversal
+        </div>
+        <ul className="mt-2 list-inside list-disc space-y-1 text-amber-700 dark:text-amber-300">
+          <li>Appends a compensating ledger entry with a negated amount.</li>
+          <li>Keeps the original entry intact — money-flow rollups net to zero for the reversed event.</li>
+          <li>
+            Reversing a <b>payout</b> optionally clears the receiving member&apos;s
+            payoutCycle so the rotation can re-award that slot.
+          </li>
+        </ul>
+      </div>
+
+      <div className="rounded-md border p-3">
+        <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Ledger entries on cycle {cycle}
+        </div>
+        {entries === null ? (
+          <Skeleton className="h-16 w-full" />
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No ledger entries found for cycle {cycle}.
+          </p>
+        ) : (
+          <div className="max-h-72 overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Kind</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Note</TableHead>
+                  <TableHead className="text-right">Pick</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {entries.map((e) => {
+                  const isReversal = !!e.reversesEntryId;
+                  const alreadyReversed = alreadyReversedIds.has(e.id);
+                  const canPick = !isReversal && !alreadyReversed;
+                  const isPicked = e.id === pickedId;
+                  return (
+                    <TableRow
+                      key={e.id}
+                      className={
+                        isPicked
+                          ? "bg-primary/5"
+                          : canPick
+                            ? "cursor-pointer"
+                            : "opacity-60"
+                      }
+                      onClick={canPick ? () => setPickedId(e.id) : undefined}
+                    >
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${KIND_STYLES[e.kind] ?? ""}`}
+                        >
+                          {e.kind}
+                        </Badge>
+                        {isReversal && (
+                          <Badge variant="secondary" className="ml-1 text-[10px]">
+                            reversal
+                          </Badge>
+                        )}
+                        {alreadyReversed && (
+                          <Badge variant="secondary" className="ml-1 text-[10px]">
+                            reversed
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className="truncate font-mono text-[10px]"
+                        title={e.userId}
+                      >
+                        {e.userId.length > 12 ? `${e.userId.slice(0, 12)}…` : e.userId}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {e.currency} {e.amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell
+                        className="max-w-[16rem] truncate text-xs text-muted-foreground"
+                        title={e.note ?? undefined}
+                      >
+                        {e.note ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {canPick ? (
+                          <Button
+                            size="sm"
+                            variant={isPicked ? "default" : "outline"}
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setPickedId(e.id);
+                            }}
+                          >
+                            {isPicked ? "Selected" : "Pick"}
+                          </Button>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      {picked && (
+        <div className="rounded-md border p-3 text-sm">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Compensating entry that will be written
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+            <div>
+              <div className="text-xs text-muted-foreground">Kind</div>
+              <div>{picked.kind}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">User</div>
+              <div className="font-mono text-xs">{picked.userId}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Original amount</div>
+              <div className="tabular-nums">
+                {picked.currency} {picked.amount.toLocaleString()}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Compensating amount</div>
+              <div className="tabular-nums text-red-700 dark:text-red-300">
+                {picked.currency} {(-picked.amount).toLocaleString()}
+              </div>
+            </div>
+          </div>
+          {picked.kind === "payout" && (
+            <label
+              className="mt-3 flex cursor-pointer items-center gap-2 text-sm"
+              onClick={() => setClearPayout((v) => !v)}
+            >
+              <Checkbox checked={clearPayout} tabIndex={-1} />
+              Also clear the recipient&apos;s payoutCycle so the slot can be re-awarded.
+            </label>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-2">
+        <Label htmlFor="reason">Reason (required, saved to audit log)</Label>
+        <Textarea
+          id="reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Why is this entry being reversed? e.g. duplicate contribution recorded by admin at 14:03."
+          rows={3}
+        />
+      </div>
+
+      <Button
+        variant="default"
+        disabled={!canApply || busy}
+        onClick={apply}
+      >
+        <RotateCcw />
+        {busy ? "Recording reversal…" : "Record reversal"}
       </Button>
     </div>
   );

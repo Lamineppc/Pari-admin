@@ -37,6 +37,7 @@ export type AuditAction =
   | "flag_escalation_manual"
   | "flag_escalation_auto"
   | "wipe_cycle_data"
+  | "reverse_ledger_entry"
   | "set_group_status"
   | "trash_mock_group"
   | "trash_all_mock_groups"
