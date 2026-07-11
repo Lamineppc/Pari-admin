@@ -464,11 +464,13 @@ function ReverseStep({
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [clearPayout, setClearPayout] = useState(true);
+  const [ackNoRefund, setAckNoRefund] = useState(false);
 
   useEffect(() => {
     setEntries(null);
     setPickedId(null);
     setReason("");
+    setAckNoRefund(false);
     loadCycleLedger(group.id, cycle)
       .then(setEntries)
       .catch((e) => {
@@ -511,21 +513,47 @@ function ReverseStep({
     }
   }
 
-  const canApply = !!picked && reason.trim().length > 0;
+  const canApply = !!picked && reason.trim().length > 0 && ackNoRefund;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/40">
-        <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-200">
-          <RotateCcw className="h-4 w-4" />
-          Non-destructive reversal
+      <div className="rounded-md border-2 border-red-300 bg-red-50 p-4 text-sm dark:border-red-800 dark:bg-red-950/50">
+        <div className="flex items-center gap-2 font-semibold text-red-900 dark:text-red-100">
+          <AlertTriangle className="h-4 w-4" />
+          This does NOT refund real money
         </div>
-        <ul className="mt-2 list-inside list-disc space-y-1 text-amber-700 dark:text-amber-300">
+        <p className="mt-2 text-red-800 dark:text-red-200">
+          The reversal is a <b>bookkeeping correction only</b>. It writes a
+          compensating entry into this group&apos;s ledger so the books
+          balance — it does not talk to Orange Money, does not touch any
+          wallet, does not undo a real payment.
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-red-200 bg-white/60 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950/60 dark:text-red-100">
+            <div className="font-semibold">Safe to use when</div>
+            The entry was mis-recorded (duplicate keystroke, wrong amount,
+            wrong user) and <b>no real money moved</b>.
+          </div>
+          <div className="rounded-md border border-red-200 bg-white/60 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950/60 dark:text-red-100">
+            <div className="font-semibold">Not enough on its own when</div>
+            Real money actually moved. Reverse the ledger here, then also
+            refund via the payment provider or a manual settlement — or
+            the books and the wallets will disagree.
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+        <div className="flex items-center gap-2 font-medium">
+          <RotateCcw className="h-4 w-4" />
+          What the reversal actually does
+        </div>
+        <ul className="mt-1 list-inside list-disc space-y-0.5">
           <li>Appends a compensating ledger entry with a negated amount.</li>
-          <li>Keeps the original entry intact — money-flow rollups net to zero for the reversed event.</li>
+          <li>Keeps the original entry intact — money-flow rollups net to zero.</li>
           <li>
-            Reversing a <b>payout</b> optionally clears the receiving member&apos;s
-            payoutCycle so the rotation can re-award that slot.
+            Reversing a <b>payout</b> optionally clears the receiving
+            member&apos;s payoutCycle so the rotation can re-award that slot.
           </li>
         </ul>
       </div>
@@ -678,13 +706,25 @@ function ReverseStep({
         />
       </div>
 
+      <label
+        className="flex cursor-pointer items-start gap-2 rounded-md border border-red-200 bg-red-50/60 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-100"
+        onClick={() => setAckNoRefund((v) => !v)}
+      >
+        <Checkbox checked={ackNoRefund} tabIndex={-1} className="mt-0.5" />
+        <span>
+          I understand this only rewrites the ledger and does not refund any
+          real money. If real money moved, I&apos;ll trigger the refund
+          separately.
+        </span>
+      </label>
+
       <Button
         variant="default"
         disabled={!canApply || busy}
         onClick={apply}
       >
         <RotateCcw />
-        {busy ? "Recording reversal…" : "Record reversal"}
+        {busy ? "Recording reversal…" : "Record ledger reversal"}
       </Button>
     </div>
   );
