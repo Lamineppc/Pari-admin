@@ -11,12 +11,16 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
+  getDoc,
+  getDocs,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
 import { firestore } from "./firebase";
 import {
+  groupPotId,
   mockPaymentProvider,
   userWalletId,
 } from "./money/mock/mock-payment-provider";
@@ -152,4 +156,55 @@ export async function createMockGroup(
     memberUids,
     startingBalance,
   };
+}
+
+/** Deletes a mock group and every artifact it created: member docs,
+ *  payments, ledger entries, all mockWallets involved, and the synthetic
+ *  test-account user docs. Non-mock groups are refused so we can never
+ *  accidentally hose a real group through this path. */
+export async function trashMockGroup(groupId: string): Promise<void> {
+  const groupRef = doc(firestore, "groups", groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.moneyProvider !== "mock") {
+    throw new Error("This action only works on mock groups.");
+  }
+
+  const memberIds = ((g.memberIds as string[] | undefined) ?? []).filter(
+    (id) => typeof id === "string",
+  );
+  const syntheticUids = memberIds.filter((uid) => uid.startsWith("sim_"));
+
+  // Wallets first — best-effort so a stubborn doc doesn't block cleanup.
+  await Promise.all([
+    deleteDoc(doc(firestore, "mockWallets", groupPotId(groupId))).catch(
+      () => {},
+    ),
+    ...memberIds.map((uid) =>
+      deleteDoc(doc(firestore, "mockWallets", userWalletId(uid))).catch(
+        () => {},
+      ),
+    ),
+  ]);
+
+  // Synthetic user docs — only sim_* uids, so real observers aren't nuked.
+  await Promise.all(
+    syntheticUids.map((uid) =>
+      deleteDoc(doc(firestore, "users", uid)).catch(() => {}),
+    ),
+  );
+
+  // Subcollections in one batch. Firestore batches accept up to 500 writes.
+  const [membersSnap, paymentsSnap, ledgerSnap] = await Promise.all([
+    getDocs(collection(firestore, "groups", groupId, "members")),
+    getDocs(collection(firestore, "groups", groupId, "payments")),
+    getDocs(collection(firestore, "groups", groupId, "ledger")),
+  ]);
+  const batch = writeBatch(firestore);
+  membersSnap.docs.forEach((d) => batch.delete(d.ref));
+  paymentsSnap.docs.forEach((d) => batch.delete(d.ref));
+  ledgerSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(groupRef);
+  await batch.commit();
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
+import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, Trash2, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -39,6 +39,7 @@ import {
   type SimulatorPreview,
   type SimulatorRunResult,
 } from "@/lib/simulator";
+import { trashMockGroup } from "@/lib/mock-groups";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -68,7 +69,7 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -123,6 +124,28 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function trashGroup() {
+    if (!group) return;
+    if (
+      !window.confirm(
+        `Delete "${group.name}" and every synthetic member, wallet, payment, and ledger entry it created? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusy("trash");
+    try {
+      await trashMockGroup(group.id);
+      toast.success("Simulation group deleted.");
+      onOpenChange(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function joinAsObserver() {
     if (!group) return;
@@ -368,6 +391,20 @@ export function GroupDetailSheet({
                   memberIds so the mobile app shows this group in your list.
                   Position 999 keeps you out of the payout rotation. Flip back
                   in Users when done.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={trashGroup}
+                  className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                >
+                  <Trash2 /> Trash this simulation
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Deletes the group, every synthetic sim_* user, all mock
+                  wallets, and every payment + ledger entry. Real observer
+                  accounts (yours) are left alone. No undo.
                 </p>
               </div>
             </>

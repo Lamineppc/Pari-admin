@@ -296,6 +296,24 @@ export async function runNextCycle(
   const phase = preview.phase;
   const halfPayout = (group.amount * group.memberCount) / 2;
 
+  // Pre-flight — read every contributor's balance up-front and abort
+  // before we've done any writes if any wallet is short. Without this,
+  // a mid-cycle failure would leave partial contributions committed
+  // while currentCycle stayed unchanged, silently inflating the pot on
+  // every retry. Real Orange Money will need a more robust rollback via
+  // Cloud Functions in PR 6b–d; for the mock this cheap check catches
+  // 100% of insufficient-balance errors.
+  await Promise.all(
+    contributingMembers.map(async (m) => {
+      const balance = await mockPaymentProvider.balanceFor(userWalletId(m.id));
+      if (balance < group.amount) {
+        throw new Error(
+          `${m.name} has ${group.currency} ${balance.toLocaleString()}, needs ${group.currency} ${group.amount.toLocaleString()}. Top up the wallet in Users, then re-run.`,
+        );
+      }
+    }),
+  );
+
   // Step 1 — every non-skipped active member contributes C. Skipped members
   // are silently omitted so a subsequent flagAdminEscalationIfNeeded pass
   // (from the mobile client's group-open) will observe a missed cycle.
