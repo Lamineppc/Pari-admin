@@ -16,7 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EscalationBadge } from "@/components/escalation-badge";
 import { GroupDetailSheet } from "./group-detail-sheet";
-import { securedPhase, subscribeGroups, type Group } from "@/lib/groups";
+import { NewMockGroupDialog } from "./new-mock-group-dialog";
+import { isMockMoneyGroup, securedPhase, subscribeGroups, type Group } from "@/lib/groups";
+import { Beaker } from "lucide-react";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -52,12 +54,13 @@ export default function GroupsPage() {
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
             <UsersRound className="h-4 w-4" />
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-semibold tracking-tight">Groups</h1>
             <p className="text-sm text-muted-foreground">
               Live view of every tontine on the platform. Click a row for details and actions.
             </p>
           </div>
+          <NewMockGroupDialog onCreated={(id) => setSelectedId(id)} />
         </div>
         <div className="relative max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -101,9 +104,20 @@ export default function GroupsPage() {
                 >
                   <TableCell className="font-medium">{g.name || "(untitled)"}</TableCell>
                   <TableCell>
-                    <Badge variant={g.type === "secured" ? "default" : "secondary"}>
-                      {g.type}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={g.type === "secured" ? "default" : "secondary"}>
+                        {g.type}
+                      </Badge>
+                      {isMockMoneyGroup(g) && (
+                        <span
+                          className="inline-flex items-center gap-0.5 rounded border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[10px] font-medium text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200"
+                          title="Simulation group — no real money"
+                        >
+                          <Beaker className="h-2.5 w-2.5" />
+                          sim
+                        </span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Badge variant={g.status === "active" ? "secondary" : "outline"}>
