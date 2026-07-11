@@ -49,6 +49,7 @@ export type SimulatorPreview = {
   nextCycle: number;
   phase: "collateral" | "distribution" | "terminal";
   activeMembers: number;
+  activeMembersList: SimulatorMember[];
   firstHalfRecipients: SimulatorMember[];
   secondHalfRecipients: SimulatorMember[];
 };
@@ -57,10 +58,18 @@ export type SimulatorRunResult = {
   cycleRan: number;
   phase: "collateral" | "distribution" | "terminal";
   contributions: number;
+  skipped: number;
   firstHalfPayouts: number;
   secondHalfPayouts: number;
   leftover?: { adminShare: number; platformShare: number };
   markedCompleted: boolean;
+};
+
+export type RunNextCycleOptions = {
+  /** Members who won't contribute this cycle. Used to simulate delinquency
+   *  so downstream escalation-flag paths can be exercised. Payouts still
+   *  fire on their scheduled cycles regardless. */
+  skipMemberIds?: Set<string>;
 };
 
 const PLATFORM_WALLET_ID = "platform:pari";
@@ -132,15 +141,15 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
   const { group, members } = await loadContext(groupId);
 
   if (!isMockMoneyGroup(group)) {
-    return { ready: false, reason: "Simulator only runs on mock groups.", nextCycle: 0, phase: "collateral", activeMembers: 0, firstHalfRecipients: [], secondHalfRecipients: [] };
+    return { ready: false, reason: "Simulator only runs on mock groups.", nextCycle: 0, phase: "collateral", activeMembers: 0, activeMembersList: [], firstHalfRecipients: [], secondHalfRecipients: [] };
   }
   if (group.type !== "secured") {
-    return { ready: false, reason: "Simulator only runs on Secured groups.", nextCycle: 0, phase: "collateral", activeMembers: 0, firstHalfRecipients: [], secondHalfRecipients: [] };
+    return { ready: false, reason: "Simulator only runs on Secured groups.", nextCycle: 0, phase: "collateral", activeMembers: 0, activeMembersList: [], firstHalfRecipients: [], secondHalfRecipients: [] };
   }
   const currentCycle = group.currentCycle ?? 0;
   const nextCycle = currentCycle + 1;
   if (currentCycle >= group.memberCount) {
-    return { ready: false, reason: "Rotation already complete.", nextCycle, phase: "terminal", activeMembers: 0, firstHalfRecipients: [], secondHalfRecipients: [] };
+    return { ready: false, reason: "Rotation already complete.", nextCycle, phase: "terminal", activeMembers: 0, activeMembersList: [], firstHalfRecipients: [], secondHalfRecipients: [] };
   }
 
   const active = members.filter((m) => !m.kicked);
@@ -160,6 +169,9 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
   const secondHalfRecipients = phase === "terminal" ? active : [];
 
   const membersWithoutPositions = active.filter((m) => m.position == null);
+  const activeMembersList = [...active].sort(
+    (a, b) => (a.position ?? 999) - (b.position ?? 999),
+  );
   if (membersWithoutPositions.length > 0) {
     return {
       ready: false,
@@ -167,6 +179,7 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
       nextCycle,
       phase,
       activeMembers: active.length,
+      activeMembersList,
       firstHalfRecipients,
       secondHalfRecipients,
     };
@@ -177,6 +190,7 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
     nextCycle,
     phase,
     activeMembers: active.length,
+    activeMembersList,
     firstHalfRecipients,
     secondHalfRecipients,
   };
@@ -259,18 +273,26 @@ async function simTransferAndLog(
 }
 
 /** Runs the next cycle. Only reachable when previewNextCycle returned ready. */
-export async function runNextCycle(groupId: string): Promise<SimulatorRunResult> {
+export async function runNextCycle(
+  groupId: string,
+  options: RunNextCycleOptions = {},
+): Promise<SimulatorRunResult> {
   const preview = await previewNextCycle(groupId);
   if (!preview.ready) throw new Error(preview.reason ?? "Simulator not ready.");
   const { group, members } = await loadContext(groupId);
   const active = members.filter((m) => !m.kicked && m.position != null);
-  const halfway = halfwayCycle(group);
+  const skipSet = options.skipMemberIds ?? new Set<string>();
+  const contributingMembers = active.filter((m) => !skipSet.has(m.id));
+  const skipped = active.length - contributingMembers.length;
+  void halfwayCycle; // preserved for readability; unused after simplification
   const nextCycle = preview.nextCycle;
   const phase = preview.phase;
   const halfPayout = (group.amount * group.memberCount) / 2;
 
-  // Step 1 — every active member contributes C.
-  for (const m of active) {
+  // Step 1 — every non-skipped active member contributes C. Skipped members
+  // are silently omitted so a subsequent flagAdminEscalationIfNeeded pass
+  // (from the mobile client's group-open) will observe a missed cycle.
+  for (const m of contributingMembers) {
     await simTransferAndLog(group, {
       fromWalletId: userWalletId(m.id),
       toWalletId: groupPotId(group.id),
@@ -370,7 +392,8 @@ export async function runNextCycle(groupId: string): Promise<SimulatorRunResult>
   return {
     cycleRan: nextCycle,
     phase,
-    contributions: active.length,
+    contributions: contributingMembers.length,
+    skipped,
     firstHalfPayouts,
     secondHalfPayouts,
     leftover,

@@ -38,6 +38,7 @@ import {
   type SimulatorPreview,
   type SimulatorRunResult,
 } from "@/lib/simulator";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const PHASE_LABELS: Record<string, string> = {
   notStarted: "Not started",
@@ -71,6 +72,7 @@ export function GroupDetailSheet({
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
+  const [skipSet, setSkipSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!group) {
@@ -125,9 +127,12 @@ export function GroupDetailSheet({
     if (!group) return;
     setBusy("simulate");
     try {
-      const result: SimulatorRunResult = await runNextCycle(group.id);
+      const result: SimulatorRunResult = await runNextCycle(group.id, {
+        skipMemberIds: skipSet,
+      });
       const parts: string[] = [];
       if (result.contributions > 0) parts.push(`${result.contributions} contribution(s)`);
+      if (result.skipped > 0) parts.push(`${result.skipped} skipped`);
       if (result.firstHalfPayouts > 0) parts.push(`${result.firstHalfPayouts} first-half payout(s)`);
       if (result.secondHalfPayouts > 0) parts.push(`${result.secondHalfPayouts} second-half payout(s)`);
       if (result.leftover) {
@@ -138,6 +143,7 @@ export function GroupDetailSheet({
       toast.success(
         `Cycle ${result.cycleRan} (${result.phase}): ${parts.join(", ") || "no writes"}${result.markedCompleted ? " · rotation completed" : ""}`,
       );
+      setSkipSet(new Set());
       const next = await previewNextCycle(group.id);
       setSimPreview(next);
     } catch (e) {
@@ -146,6 +152,15 @@ export function GroupDetailSheet({
     } finally {
       setBusy(null);
     }
+  }
+
+  function toggleSkip(memberId: string) {
+    setSkipSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
   }
 
   async function run(
@@ -338,6 +353,8 @@ export function GroupDetailSheet({
                   preview={simPreview}
                   busy={busy === "simulate"}
                   onRun={runSimulate}
+                  skipSet={skipSet}
+                  onToggleSkip={toggleSkip}
                   currency={group.currency}
                   amount={group.amount}
                   memberCount={group.memberCount}
@@ -424,6 +441,8 @@ function SimulatorPanel({
   preview,
   busy,
   onRun,
+  skipSet,
+  onToggleSkip,
   currency,
   amount,
   memberCount,
@@ -431,6 +450,8 @@ function SimulatorPanel({
   preview: SimulatorPreview | null;
   busy: boolean;
   onRun: () => void;
+  skipSet: Set<string>;
+  onToggleSkip: (memberId: string) => void;
   currency: string;
   amount: number;
   memberCount: number;
@@ -451,6 +472,7 @@ function SimulatorPanel({
     distribution: "Distribution (Phase 2)",
     terminal: "Terminal",
   }[preview.phase];
+  const contributingCount = preview.activeMembers - skipSet.size;
   return (
     <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -468,7 +490,13 @@ function SimulatorPanel({
       </div>
       <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
         <li>
-          {preview.activeMembers} × {currency} {amount.toLocaleString()} contribution(s)
+          {contributingCount} × {currency} {amount.toLocaleString()} contribution(s)
+          {skipSet.size > 0 && (
+            <span className="text-amber-700 dark:text-amber-300">
+              {" "}
+              · {skipSet.size} skipped
+            </span>
+          )}
         </li>
         {preview.firstHalfRecipients.length > 0 && (
           <li>
@@ -484,6 +512,50 @@ function SimulatorPanel({
           </li>
         )}
       </ul>
+      <details className="rounded-md border bg-background/50 px-3 py-2 text-xs">
+        <summary className="cursor-pointer select-none text-muted-foreground">
+          Skip contributions this cycle{" "}
+          {skipSet.size > 0 && (
+            <span className="text-amber-700 dark:text-amber-300">
+              ({skipSet.size} selected)
+            </span>
+          )}
+        </summary>
+        <div className="mt-2 flex flex-col gap-1.5">
+          {preview.activeMembersList.map((m) => {
+            const checked = skipSet.has(m.id);
+            return (
+              <label
+                key={m.id}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded px-2 py-1 hover:bg-muted/50"
+              >
+                <span className="flex items-center gap-2">
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => onToggleSkip(m.id)}
+                  />
+                  <span className="tabular-nums text-muted-foreground">
+                    #{m.position ?? "?"}
+                  </span>
+                  <span>{m.name}</span>
+                  {m.role !== "member" && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {m.role}
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+          {skipSet.size > 0 && (
+            <p className="pt-1 text-[11px] italic text-muted-foreground">
+              Skipped members simulate delinquency — they'll show as missing
+              this cycle in the ledger. Open the group on the mobile app to
+              trigger the escalation-flag detector.
+            </p>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

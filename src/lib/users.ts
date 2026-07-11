@@ -61,6 +61,14 @@ export function subscribeUsers(cb: (users: PlatformUser[]) => void, onError?: (e
 // Silently writes a notification to the target user's inbox so they see why
 // their access changed. Notification writes are best-effort — a rule
 // mismatch there shouldn't block the ban itself.
+// Super-admin-only: flip a user between real and simulation-only. Firestore
+// rules gate the field so no other caller succeeds. Changing the flag does
+// not touch existing memberships — the membership-write rule only checks
+// isTestAccount on future joins, so the two universes stay decoupled.
+export async function setUserIsTestAccount(uid: string, isTestAccount: boolean): Promise<void> {
+  await updateDoc(doc(firestore, "users", uid), { isTestAccount });
+}
+
 export async function setUserBan(
   uid: string,
   banType: BanType | null,

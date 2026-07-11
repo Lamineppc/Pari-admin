@@ -16,7 +16,12 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { setUserBan, type BanType, type PlatformUser } from "@/lib/users";
+import {
+  setUserBan,
+  setUserIsTestAccount,
+  type BanType,
+  type PlatformUser,
+} from "@/lib/users";
 import {
   mockPaymentProvider,
   userWalletId,
@@ -33,7 +38,9 @@ export function UserDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState<BanType | "restore" | "topup" | null>(null);
+  const [busy, setBusy] = useState<
+    BanType | "restore" | "topup" | "toggle-test" | null
+  >(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
 
@@ -72,6 +79,25 @@ export function UserDetailSheet({
             : "Access revoked.",
       );
       setReason("");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyToggleTest() {
+    if (!user) return;
+    const nextValue = !user.isTestAccount;
+    setBusy("toggle-test");
+    try {
+      await setUserIsTestAccount(user.uid, nextValue);
+      toast.success(
+        nextValue
+          ? "Converted to test account. Can now join mock groups only."
+          : "Converted back to a real account. Can join real groups only.",
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg);
@@ -188,6 +214,34 @@ export function UserDetailSheet({
               </Button>
             )}
           </div>
+
+          {!isSelf && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Simulation
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    {user.isTestAccount
+                      ? "This account is a test account and can only join mock groups. Converting it back means it can join real groups but loses access to simulation-only groups."
+                      : "This account is a real user. Converting to a test account lets it join mock simulation groups, and blocks it from joining real groups going forward. Existing memberships in either universe are preserved."}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={busy !== null}
+                  onClick={applyToggleTest}
+                >
+                  <Beaker />{" "}
+                  {user.isTestAccount
+                    ? "Convert to real account"
+                    : "Convert to test account"}
+                </Button>
+              </div>
+            </>
+          )}
 
           {user.isTestAccount && (
             <>
