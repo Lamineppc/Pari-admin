@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Users, Search } from "lucide-react";
+import { Users, Search, ShieldAlert, ShieldOff, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -13,17 +13,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { subscribeUsers, type PlatformUser } from "@/lib/users";
+import { setUserBan, subscribeUsers, type PlatformUser } from "@/lib/users";
 import { useAuth } from "@/lib/auth-context";
 import { UserDetailSheet } from "./user-detail-sheet";
+import { BulkActionBar } from "@/components/bulk-action-bar";
 
 export default function UsersPage() {
   const { user: authUser } = useAuth();
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -54,6 +59,58 @@ export default function UsersPage() {
   }, [users, q]);
 
   const selected = users?.find((u) => u.uid === selectedId) ?? null;
+  const allVisibleChecked =
+    filtered !== null && filtered.length > 0 && filtered.every((u) => checkedIds.has(u.uid));
+
+  function toggleOne(uid: string) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    if (!filtered) return;
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleChecked) {
+        for (const u of filtered) next.delete(u.uid);
+      } else {
+        for (const u of filtered) next.add(u.uid);
+      }
+      return next;
+    });
+  }
+
+  async function runBulk(kind: "soft" | "hard" | "restore") {
+    const targets = Array.from(checkedIds).filter(
+      (uid) => uid !== authUser?.uid, // never touch self
+    );
+    if (targets.length === 0) {
+      toast.error("Nothing to apply — self-selection is skipped.");
+      return;
+    }
+    const label = kind === "restore" ? "restore access" : kind === "soft" ? "soft-ban" : "hard-ban";
+    if (!window.confirm(`Apply ${label} to ${targets.length} user(s)?`)) return;
+    setBusy(true);
+    let ok = 0;
+    let failed = 0;
+    await Promise.all(
+      targets.map(async (uid) => {
+        try {
+          await setUserBan(uid, kind === "restore" ? null : kind, "");
+          ok += 1;
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+    setBusy(false);
+    setCheckedIds(new Set());
+    toast.success(`${label} applied to ${ok} user(s)${failed > 0 ? `, ${failed} failed` : ""}.`);
+  }
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -65,7 +122,8 @@ export default function UsersPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
             <p className="text-sm text-muted-foreground">
-              Every registered account. Click a row to view details and manage access.
+              Every registered account. Click a row to view details, or tick the
+              checkboxes for bulk actions.
             </p>
           </div>
         </div>
@@ -84,6 +142,17 @@ export default function UsersPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <div
+                  role="checkbox"
+                  aria-checked={allVisibleChecked}
+                  tabIndex={0}
+                  onClick={toggleAllVisible}
+                  className="inline-flex cursor-pointer items-center justify-center"
+                >
+                  <Checkbox checked={allVisibleChecked} tabIndex={-1} />
+                </div>
+              </TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Username</TableHead>
@@ -95,19 +164,31 @@ export default function UsersPage() {
             {filtered === null && <LoadingRows />}
             {filtered !== null && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
                   {q ? "No users match your search." : "No users yet."}
                 </TableCell>
               </TableRow>
             )}
             {filtered?.map((u) => {
               const location = [u.city, u.state, u.country].filter(Boolean).join(", ");
+              const isChecked = checkedIds.has(u.uid);
               return (
                 <TableRow
                   key={u.uid}
                   onClick={() => setSelectedId(u.uid)}
                   className="cursor-pointer"
                 >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div
+                      role="checkbox"
+                      aria-checked={isChecked}
+                      tabIndex={0}
+                      onClick={() => toggleOne(u.uid)}
+                      className="inline-flex cursor-pointer items-center justify-center"
+                    >
+                      <Checkbox checked={isChecked} tabIndex={-1} />
+                    </div>
+                  </TableCell>
                   <TableCell className="font-medium">{u.name || "(no name)"}</TableCell>
                   <TableCell className="truncate text-sm text-muted-foreground" title={u.email}>
                     {u.email || "—"}
@@ -143,6 +224,33 @@ export default function UsersPage() {
         currentUid={authUser?.uid ?? null}
         onOpenChange={(o) => !o && setSelectedId(null)}
       />
+
+      <BulkActionBar count={checkedIds.size} onClear={() => setCheckedIds(new Set())}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => runBulk("soft")}
+        >
+          <ShieldAlert /> Soft ban
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={busy}
+          onClick={() => runBulk("hard")}
+        >
+          <ShieldOff /> Hard ban
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          disabled={busy}
+          onClick={() => runBulk("restore")}
+        >
+          <ShieldCheck /> Restore
+        </Button>
+      </BulkActionBar>
     </div>
   );
 }
@@ -152,7 +260,7 @@ function LoadingRows() {
     <>
       {[0, 1, 2, 3].map((i) => (
         <TableRow key={i}>
-          <TableCell colSpan={5}>
+          <TableCell colSpan={6}>
             <Skeleton className="h-6 w-full" />
           </TableCell>
         </TableRow>

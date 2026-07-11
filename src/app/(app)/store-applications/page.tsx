@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Store, Search } from "lucide-react";
+import { Store, Search, CheckCircle2, ShieldOff, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -13,11 +13,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StoreDetailSheet } from "./store-detail-sheet";
 import { StoreStatusBadge } from "./store-status-badge";
-import { subscribeStores, type Store as StoreDoc, type StoreStatus } from "@/lib/stores";
+import { approveStore, rejectStore, revokeStore, subscribeStores, type Store as StoreDoc, type StoreStatus } from "@/lib/stores";
+import { BulkActionBar } from "@/components/bulk-action-bar";
 
 type Filter = "pending" | "active" | "rejected" | "all";
 
@@ -44,6 +46,8 @@ export default function StoreApplicationsPage() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("pending");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -86,6 +90,77 @@ export default function StoreApplicationsPage() {
   }, [stores, q, filter]);
 
   const selected = stores?.find((s) => s.id === selectedId) ?? null;
+  const allVisibleChecked =
+    filtered !== null && filtered.length > 0 && filtered.every((s) => checkedIds.has(s.id));
+
+  function toggleOne(id: string) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    if (!filtered) return;
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleChecked) {
+        for (const s of filtered) next.delete(s.id);
+      } else {
+        for (const s of filtered) next.add(s.id);
+      }
+      return next;
+    });
+  }
+
+  async function runBulk(kind: "approve" | "reject" | "revoke") {
+    if (!stores) return;
+    const targets = stores.filter((s) => checkedIds.has(s.id));
+    if (targets.length === 0) return;
+
+    // Guard: don't try to approve a non-pending store or revoke a non-active
+    // one — the underlying rule would allow it but the semantic is wrong.
+    const eligible = targets.filter((s) => {
+      if (kind === "approve") return s.status === "pending" || s.status === "rejected" || s.status === "revoked";
+      if (kind === "reject") return s.status === "pending";
+      return s.status === "active"; // revoke
+    });
+    if (eligible.length === 0) {
+      toast.error(`No stores in the selection are eligible for ${kind}.`);
+      return;
+    }
+
+    let reason = "";
+    if (kind !== "approve") {
+      reason = window.prompt(`Reason for ${kind} (sent to each owner)?`) ?? "";
+      if (reason === null) return; // cancelled
+    }
+    if (!window.confirm(`${kind[0].toUpperCase() + kind.slice(1)} ${eligible.length} store(s)?`)) return;
+
+    setBusy(true);
+    let ok = 0;
+    let failed = 0;
+    await Promise.all(
+      eligible.map(async (s) => {
+        try {
+          if (kind === "approve") await approveStore(s);
+          else if (kind === "reject") await rejectStore(s, reason);
+          else await revokeStore(s, reason);
+          ok += 1;
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+    setBusy(false);
+    setCheckedIds(new Set());
+    const skipped = targets.length - eligible.length;
+    toast.success(
+      `${kind} applied to ${ok}${failed > 0 ? `, ${failed} failed` : ""}${skipped > 0 ? `, ${skipped} skipped as ineligible` : ""}.`,
+    );
+  }
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -141,6 +216,17 @@ export default function StoreApplicationsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <div
+                  role="checkbox"
+                  aria-checked={allVisibleChecked}
+                  tabIndex={0}
+                  onClick={toggleAllVisible}
+                  className="inline-flex cursor-pointer items-center justify-center"
+                >
+                  <Checkbox checked={allVisibleChecked} tabIndex={-1} />
+                </div>
+              </TableHead>
               <TableHead>Store</TableHead>
               <TableHead>Owner</TableHead>
               <TableHead>Category</TableHead>
@@ -152,30 +238,44 @@ export default function StoreApplicationsPage() {
             {filtered === null && <LoadingRows />}
             {filtered !== null && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
                   {q ? "No applications match your search." : "No applications in this bucket."}
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((s) => (
-              <TableRow
-                key={s.id}
-                onClick={() => setSelectedId(s.id)}
-                className="cursor-pointer"
-              >
-                <TableCell className="font-medium">{s.storeName || "(no name)"}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {s.ownerName || "—"}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{s.category}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {fmtDate(s.createdAt)}
-                </TableCell>
-                <TableCell>
-                  <StoreStatusBadge status={s.status} />
-                </TableCell>
-              </TableRow>
-            ))}
+            {filtered?.map((s) => {
+              const isChecked = checkedIds.has(s.id);
+              return (
+                <TableRow
+                  key={s.id}
+                  onClick={() => setSelectedId(s.id)}
+                  className="cursor-pointer"
+                >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div
+                      role="checkbox"
+                      aria-checked={isChecked}
+                      tabIndex={0}
+                      onClick={() => toggleOne(s.id)}
+                      className="inline-flex cursor-pointer items-center justify-center"
+                    >
+                      <Checkbox checked={isChecked} tabIndex={-1} />
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-medium">{s.storeName || "(no name)"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {s.ownerName || "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{s.category}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {fmtDate(s.createdAt)}
+                  </TableCell>
+                  <TableCell>
+                    <StoreStatusBadge status={s.status} />
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -184,6 +284,18 @@ export default function StoreApplicationsPage() {
         store={selected}
         onOpenChange={(o) => !o && setSelectedId(null)}
       />
+
+      <BulkActionBar count={checkedIds.size} onClear={() => setCheckedIds(new Set())}>
+        <Button variant="default" size="sm" disabled={busy} onClick={() => runBulk("approve")}>
+          <CheckCircle2 /> Approve
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => runBulk("reject")}>
+          <XCircle /> Reject
+        </Button>
+        <Button variant="destructive" size="sm" disabled={busy} onClick={() => runBulk("revoke")}>
+          <ShieldOff /> Revoke
+        </Button>
+      </BulkActionBar>
     </div>
   );
 }
@@ -193,7 +305,7 @@ function LoadingRows() {
     <>
       {[0, 1, 2, 3].map((i) => (
         <TableRow key={i}>
-          <TableCell colSpan={5}>
+          <TableCell colSpan={6}>
             <Skeleton className="h-6 w-full" />
           </TableCell>
         </TableRow>
