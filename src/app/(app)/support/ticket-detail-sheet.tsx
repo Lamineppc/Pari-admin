@@ -217,7 +217,26 @@ export function TicketDetailSheet({
             >
               <Send /> Send reply
             </Button>
-            {ticket.lastReply && (
+            {ticket.replies.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Reply history ({ticket.replies.length})
+                </div>
+                {ticket.replies.map((r, i) => (
+                  <div
+                    key={i}
+                    className="rounded-md border bg-muted/30 p-2 text-xs"
+                  >
+                    <div className="text-[10px] text-muted-foreground">
+                      {r.authorEmail || r.authorUid.slice(0, 12)} ·{" "}
+                      {r.createdAt?.toLocaleString() ?? "—"}
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap">{r.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {ticket.replies.length === 0 && ticket.lastReply && (
               <div className="rounded-md border bg-muted/30 p-2 text-xs">
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   Last reply · {ticket.lastReplyAt?.toLocaleString() ?? "—"}

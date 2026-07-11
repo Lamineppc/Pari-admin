@@ -36,6 +36,13 @@ export type InternalNote = {
   createdAt: Date | null;
 };
 
+export type SupportReply = {
+  authorUid: string;
+  authorEmail: string;
+  body: string;
+  createdAt: Date | null;
+};
+
 export type SupportTicket = {
   id: string;
   userId: string;
@@ -52,6 +59,7 @@ export type SupportTicket = {
   assignedTo: string | null;
   resolvedAt: Date | null;
   internalNotes: InternalNote[];
+  replies: SupportReply[];
   lastReply: string | null;
   lastReplyAt: Date | null;
 };
@@ -70,6 +78,7 @@ function toDateSafe(x: unknown): Date | null {
 function toTicket(snap: QueryDocumentSnapshot): SupportTicket {
   const d = snap.data();
   const notes = (d.internalNotes as Array<Record<string, unknown>> | undefined) ?? [];
+  const replies = (d.replies as Array<Record<string, unknown>> | undefined) ?? [];
   return {
     id: snap.id,
     userId: (d.userId as string | undefined) ?? "",
@@ -90,6 +99,12 @@ function toTicket(snap: QueryDocumentSnapshot): SupportTicket {
       authorEmail: (n.authorEmail as string | undefined) ?? "",
       body: (n.body as string | undefined) ?? "",
       createdAt: toDateSafe(n.createdAt),
+    })),
+    replies: replies.map((r) => ({
+      authorUid: (r.authorUid as string | undefined) ?? "",
+      authorEmail: (r.authorEmail as string | undefined) ?? "",
+      body: (r.body as string | undefined) ?? "",
+      createdAt: toDateSafe(r.createdAt),
     })),
     lastReply: (d.lastReply as string | undefined) ?? null,
     lastReplyAt: toDateSafe(d.lastReplyAt),
@@ -167,12 +182,11 @@ async function notifyOwner(
   subject: string,
   ticketId: string,
   type: string,
-  body: string,
 ): Promise<void> {
   await addDoc(collection(firestore, "users", userId, "notifications"), {
     type,
     title: `Support: ${subject}`,
-    body,
+    body: "",
     isRead: false,
     createdAt: serverTimestamp(),
     ticketId,
@@ -201,13 +215,7 @@ export async function setTicketStatus(
   const userId = (t.userId as string | undefined) ?? "";
   const subject = (t.subject as string | undefined) ?? "";
   if (userId) {
-    await notifyOwner(
-      userId,
-      subject,
-      ticketId,
-      "support_status",
-      `Status changed to ${STATUS_LABEL[status]}.`,
-    );
+    await notifyOwner(userId, subject, ticketId, "support_status");
   }
 }
 
@@ -230,13 +238,7 @@ export async function setTicketPriority(
   const userId = (t.userId as string | undefined) ?? "";
   const subject = (t.subject as string | undefined) ?? "";
   if (userId) {
-    await notifyOwner(
-      userId,
-      subject,
-      ticketId,
-      "support_priority",
-      `Priority set to ${PRIORITY_LABEL[priority]}.`,
-    );
+    await notifyOwner(userId, subject, ticketId, "support_priority");
   }
 }
 
@@ -263,12 +265,19 @@ export async function addInternalNote(
   });
 }
 
-/** Sends a reply back to the ticket owner as an in-app notification and
- *  records the reply text on the ticket for history. */
+/** Appends a reply to the ticket's replies[] array and sends a title-only
+ *  notification to the owner. The full reply text lives on the ticket so
+ *  the user's "My messages" view can render the whole conversation
+ *  read-only — the notification stays small (title only, empty body). */
 export async function replyToTicket(
   ticketId: string,
   body: string,
 ): Promise<void> {
+  const actor = firebaseAuth.currentUser;
+  if (!actor) throw new Error("Not signed in.");
+  const trimmed = body.trim();
+  if (!trimmed) throw new Error("Reply body is empty.");
+
   const ref = doc(firestore, COLLECTION, ticketId);
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error("Ticket not found.");
@@ -277,12 +286,23 @@ export async function replyToTicket(
   const subject = (t.subject as string | undefined) ?? "";
   if (!userId) throw new Error("Ticket has no target user.");
 
-  // Reply is a normal in-app notification that references the ticket.
-  await notifyOwner(userId, subject, ticketId, "support_reply", body.trim());
+  // Firestore forbids serverTimestamp() inside array elements, so the
+  // reply's createdAt is a client-side ISO string. toDateSafe parses both.
+  const existing =
+    (snap.data().replies as Array<Record<string, unknown>>) ?? [];
+  const reply = {
+    authorUid: actor.uid,
+    authorEmail: actor.email ?? "",
+    body: trimmed,
+    createdAt: new Date().toISOString(),
+  };
 
   await updateDoc(ref, {
-    lastReply: body.trim(),
+    replies: [...existing, reply],
+    lastReply: trimmed,
     lastReplyAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  await notifyOwner(userId, subject, ticketId, "support_reply");
 }
