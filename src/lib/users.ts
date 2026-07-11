@@ -24,6 +24,10 @@ export type PlatformUser = {
   city: string | null;
   state: string | null;
   country: string | null;
+  // Marks an account as simulation-only. Test accounts can join mock
+  // groups; real accounts can't. Only the super admin can flip this
+  // flag. See docs/mock_money.md in the mobile repo.
+  isTestAccount: boolean;
 };
 
 function toUser(snap: QueryDocumentSnapshot): PlatformUser {
@@ -38,6 +42,7 @@ function toUser(snap: QueryDocumentSnapshot): PlatformUser {
     city: (d.city as string | undefined) ?? null,
     state: (d.state as string | undefined) ?? null,
     country: (d.country as string | undefined) ?? null,
+    isTestAccount: (d.isTestAccount as boolean | undefined) ?? false,
   };
 }
 

@@ -43,6 +43,11 @@ export type Group = {
   // (PR 5c). Null in normal operation.
   caretakerBy: string | null;
   createdAt: Date | null;
+  // Which PaymentProvider handles money for this group. Immutable after
+  // creation (Firestore rule). Null on legacy groups predating the field
+  // — treated as 'orange_money' at read time. See docs/mock_money.md in
+  // the mobile repo for the isolation model.
+  moneyProvider: "mock" | "orange_money" | null;
 };
 
 function toGroup(snap: QueryDocumentSnapshot): Group {
@@ -67,7 +72,19 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
     adminEscalationReason: (d.adminEscalationReason as string | undefined) ?? null,
     caretakerBy: (d.caretakerBy as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
+    moneyProvider:
+      (d.moneyProvider as "mock" | "orange_money" | undefined) ?? null,
   };
+}
+
+/// Falls back to 'orange_money' for legacy groups predating the field so
+/// real money is always the safe default.
+export function effectiveMoneyProvider(g: Pick<Group, "moneyProvider">): "mock" | "orange_money" {
+  return g.moneyProvider ?? "orange_money";
+}
+
+export function isMockMoneyGroup(g: Pick<Group, "moneyProvider">): boolean {
+  return effectiveMoneyProvider(g) === "mock";
 }
 
 // Live-updating stream of all groups, newest first. Same shape as
