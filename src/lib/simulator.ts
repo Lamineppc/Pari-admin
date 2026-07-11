@@ -17,11 +17,12 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
-  writeBatch,
   type QueryDocumentSnapshot,
+  type Transaction,
 } from "firebase/firestore";
 import { firebaseAuth, firestore } from "./firebase";
 import {
@@ -338,15 +339,19 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
   };
 }
 
-async function simTransferAndLog(
+type WalletState = { balance: number; currency: string };
+
+/** Stages a payment + ledger write on the given transaction. Assumes the
+ *  wallet updates are handled separately (we bundle those in bulk after
+ *  computing every balance delta). */
+function stagePaymentAndLedger(
+  tx: Transaction,
   group: Group,
   args: {
-    fromWalletId: string;
-    toWalletId: string;
-    amount: number;
     userId: string;
     userName: string;
     position: number;
+    amount: number;
     cycleNumber: number;
     ledgerKind: LedgerKind;
     paymentType: "contribution" | "payout";
@@ -354,39 +359,28 @@ async function simTransferAndLog(
   },
 ) {
   const {
-    fromWalletId,
-    toWalletId,
-    amount,
     userId,
     userName,
     position,
+    amount,
     cycleNumber,
     ledgerKind,
     paymentType,
     note,
   } = args;
-  if (amount <= 0) return;
-
-  await mockPaymentProvider.transfer({
-    fromWalletId,
-    toWalletId,
-    amount,
-    purpose: ledgerKind,
-    groupId: group.id,
-    cycleNumber,
-    note,
-  });
-
   const paymentId =
     paymentType === "contribution"
       ? `${userId}_c${cycleNumber}`
-      : `sim_payout_${userId}_c${cycleNumber}_${ledgerKind}`;
+      : `sim_payout_${userId}_c${cycleNumber}_${ledgerKind}${
+          note === "Second half" ? "_h2" : ""
+        }`;
   const paymentRef = doc(firestore, "groups", group.id, "payments", paymentId);
-  const ledgerId = `${ledgerKind}_${userId}_c${cycleNumber}`;
+  const ledgerId = `${ledgerKind}_${userId}_c${cycleNumber}${
+    note === "Second half" ? "_h2" : ""
+  }`;
   const ledgerRef = doc(firestore, "groups", group.id, "ledger", ledgerId);
 
-  const batch = writeBatch(firestore);
-  batch.set(paymentRef, {
+  tx.set(paymentRef, {
     cycleNumber,
     userId,
     userName,
@@ -399,7 +393,7 @@ async function simTransferAndLog(
     simulated: true,
     ...(note ? { note } : {}),
   });
-  batch.set(ledgerRef, {
+  tx.set(ledgerRef, {
     kind: ledgerKind,
     phase: phaseForCycle(group, cycleNumber),
     userId,
@@ -411,10 +405,15 @@ async function simTransferAndLog(
     paymentId,
     ...(note ? { note } : {}),
   });
-  await batch.commit();
 }
 
-/** Runs the next cycle. Only reachable when previewNextCycle returned ready. */
+/** Runs the next cycle atomically. Every wallet move, /payments write,
+ *  /ledger write, member update, and the final group update happen inside
+ *  a single Firestore transaction — either all commit or none. Insufficient
+ *  balance or any other failure rolls back completely, so we can never
+ *  again end up with an inflated pot while currentCycle stays put.
+ *
+ *  Only reachable when previewNextCycle returned ready. */
 export async function runNextCycle(
   groupId: string,
   options: RunNextCycleOptions = {},
@@ -428,144 +427,192 @@ export async function runNextCycle(
   const skipSet = options.skipMemberIds ?? new Set<string>();
   const contributingMembers = active.filter((m) => !skipSet.has(m.id));
   const skipped = active.length - contributingMembers.length;
-  void halfwayCycle; // preserved for readability; unused after simplification
+  void halfwayCycle; // preserved for readability
   const nextCycle = preview.nextCycle;
   const phase = preview.phase;
   const halfPayout = (group.amount * group.memberCount) / 2;
 
-  // Pre-flight — read every contributor's balance up-front and abort
-  // before we've done any writes if any wallet is short. Without this,
-  // a mid-cycle failure would leave partial contributions committed
-  // while currentCycle stayed unchanged, silently inflating the pot on
-  // every retry. Real Orange Money will need a more robust rollback via
-  // Cloud Functions in PR 6b–d; for the mock this cheap check catches
-  // 100% of insufficient-balance errors.
-  await Promise.all(
-    contributingMembers.map(async (m) => {
-      const balance = await mockPaymentProvider.balanceFor(userWalletId(m.id));
-      if (balance < group.amount) {
+  const groupRef = doc(firestore, "groups", group.id);
+  const potRef = doc(firestore, "mockWallets", groupPotId(group.id));
+  const platformRef = doc(firestore, "mockWallets", PLATFORM_WALLET_ID);
+
+  // Every wallet doc we might touch: contributors' + all first-half + all
+  // second-half recipients' + pot + platform. Deduped by id so we only
+  // read each once (transactions require every read up-front).
+  const walletIdsToRead = new Set<string>();
+  for (const m of active) walletIdsToRead.add(userWalletId(m.id));
+  walletIdsToRead.add(groupPotId(group.id));
+  walletIdsToRead.add(PLATFORM_WALLET_ID);
+  const walletRefs = Array.from(walletIdsToRead).map((wid) => ({
+    id: wid,
+    ref: doc(firestore, "mockWallets", wid),
+  }));
+
+  const result: SimulatorRunResult = await runTransaction(firestore, async (tx) => {
+    // ── READ PHASE ────────────────────────────────────────────────────────
+    const walletSnaps = await Promise.all(walletRefs.map((w) => tx.get(w.ref)));
+    const wallets = new Map<string, WalletState>();
+    walletRefs.forEach((w, i) => {
+      const data = walletSnaps[i].data();
+      wallets.set(w.id, {
+        balance: Number(data?.balance ?? 0),
+        currency: (data?.currency as string | undefined) ?? group.currency,
+      });
+    });
+
+    // ── VALIDATION ────────────────────────────────────────────────────────
+    for (const m of contributingMembers) {
+      const w = wallets.get(userWalletId(m.id))!;
+      if (w.balance < group.amount) {
         throw new Error(
-          `${m.name} has ${group.currency} ${balance.toLocaleString()}, needs ${group.currency} ${group.amount.toLocaleString()}. Top up the wallet in Users, then re-run.`,
+          `${m.name} has ${group.currency} ${w.balance.toLocaleString()}, needs ${group.currency} ${group.amount.toLocaleString()}. Top up the wallet in Users, then re-run.`,
         );
       }
-    }),
-  );
+    }
 
-  // Step 1 — every non-skipped active member contributes C. Skipped members
-  // are silently omitted so a subsequent flagAdminEscalationIfNeeded pass
-  // (from the mobile client's group-open) will observe a missed cycle.
-  for (const m of contributingMembers) {
-    await simTransferAndLog(group, {
-      fromWalletId: userWalletId(m.id),
-      toWalletId: groupPotId(group.id),
-      amount: group.amount,
-      userId: m.id,
-      userName: m.name,
-      position: m.position ?? 0,
-      cycleNumber: nextCycle,
-      ledgerKind: "contribution",
-      paymentType: "contribution",
-    });
-  }
-
-  // Step 2 — Phase 2 first-half payouts (also runs on the Terminal cycle
-  // because Terminal shares the last Distribution cycle's month).
-  let firstHalfPayouts = 0;
-  if (phase === "distribution" || phase === "terminal") {
-    for (const m of preview.firstHalfRecipients) {
-      await simTransferAndLog(group, {
-        fromWalletId: groupPotId(group.id),
-        toWalletId: userWalletId(m.id),
-        amount: halfPayout,
+    // ── COMPUTE + STAGE WRITES ────────────────────────────────────────────
+    // Step 1 — contributions.
+    for (const m of contributingMembers) {
+      const walletId = userWalletId(m.id);
+      const w = wallets.get(walletId)!;
+      wallets.set(walletId, { ...w, balance: w.balance - group.amount });
+      const pot = wallets.get(groupPotId(group.id))!;
+      wallets.set(groupPotId(group.id), {
+        ...pot,
+        balance: pot.balance + group.amount,
+      });
+      stagePaymentAndLedger(tx, group, {
         userId: m.id,
         userName: m.name,
         position: m.position ?? 0,
+        amount: group.amount,
         cycleNumber: nextCycle,
-        ledgerKind: "payout",
-        paymentType: "payout",
-        note: "First half",
+        ledgerKind: "contribution",
+        paymentType: "contribution",
       });
-      await updateDoc(doc(firestore, "groups", group.id, "members", m.id), {
-        payoutCycle: nextCycle,
-      });
-      firstHalfPayouts += 1;
-    }
-  }
-
-  // Step 3 — Terminal: everyone remaining receives their second half, then
-  // any residual pot is split 50/50 admin + platform.
-  let secondHalfPayouts = 0;
-  let leftover: SimulatorRunResult["leftover"];
-  const markedCompleted = phase === "terminal";
-  if (phase === "terminal") {
-    for (const m of active) {
-      await simTransferAndLog(group, {
-        fromWalletId: groupPotId(group.id),
-        toWalletId: userWalletId(m.id),
-        amount: halfPayout,
-        userId: m.id,
-        userName: m.name,
-        position: m.position ?? 0,
-        cycleNumber: nextCycle,
-        // Second half reuses 'payout' as the ledger kind — 'terminal_payout'
-        // isn't in the kind whitelist. The doc ID prefix distinguishes it
-        // from the first half.
-        ledgerKind: "payout",
-        paymentType: "payout",
-        note: "Second half",
-      });
-      secondHalfPayouts += 1;
     }
 
-    const potBalance = await mockPaymentProvider.balanceFor(groupPotId(group.id));
-    if (potBalance > 0) {
-      const admin = active.find((m) => m.role === "admin");
-      const half = potBalance / 2;
-      if (admin) {
-        await mockPaymentProvider.transfer({
-          fromWalletId: groupPotId(group.id),
-          toWalletId: userWalletId(admin.id),
-          amount: half,
-          purpose: "refund",
-          groupId: group.id,
-          cycleNumber: nextCycle,
-          note: "Terminal — admin share of pot leftover",
+    // Step 2 — first-half payouts (Distribution + Terminal both).
+    let firstHalfPayouts = 0;
+    if (phase === "distribution" || phase === "terminal") {
+      for (const m of preview.firstHalfRecipients) {
+        const pot = wallets.get(groupPotId(group.id))!;
+        if (pot.balance < halfPayout) {
+          throw new Error(
+            `Pot has ${group.currency} ${pot.balance.toLocaleString()}, needs ${group.currency} ${halfPayout.toLocaleString()} for ${m.name}'s first-half payout.`,
+          );
+        }
+        wallets.set(groupPotId(group.id), {
+          ...pot,
+          balance: pot.balance - halfPayout,
         });
+        const walletId = userWalletId(m.id);
+        const w = wallets.get(walletId)!;
+        wallets.set(walletId, { ...w, balance: w.balance + halfPayout });
+        stagePaymentAndLedger(tx, group, {
+          userId: m.id,
+          userName: m.name,
+          position: m.position ?? 0,
+          amount: halfPayout,
+          cycleNumber: nextCycle,
+          ledgerKind: "payout",
+          paymentType: "payout",
+          note: "First half",
+        });
+        tx.update(doc(firestore, "groups", group.id, "members", m.id), {
+          payoutCycle: nextCycle,
+        });
+        firstHalfPayouts += 1;
       }
-      await mockPaymentProvider.transfer({
-        fromWalletId: groupPotId(group.id),
-        toWalletId: PLATFORM_WALLET_ID,
-        amount: half,
-        purpose: "refund",
-        groupId: group.id,
-        cycleNumber: nextCycle,
-        note: "Terminal — platform share of pot leftover",
-      });
-      leftover = { adminShare: half, platformShare: half };
     }
-  }
 
-  await updateDoc(doc(firestore, "groups", group.id), {
-    currentCycle: nextCycle,
-    positionsLocked: true,
-    ...(markedCompleted ? { status: "completed" } : {}),
+    // Step 3 — Terminal: second-halves + leftover split.
+    let secondHalfPayouts = 0;
+    let leftover: SimulatorRunResult["leftover"];
+    const markedCompleted = phase === "terminal";
+    if (phase === "terminal") {
+      for (const m of active) {
+        const pot = wallets.get(groupPotId(group.id))!;
+        if (pot.balance < halfPayout) {
+          throw new Error(
+            `Pot has ${group.currency} ${pot.balance.toLocaleString()}, needs ${group.currency} ${halfPayout.toLocaleString()} for ${m.name}'s second-half payout.`,
+          );
+        }
+        wallets.set(groupPotId(group.id), {
+          ...pot,
+          balance: pot.balance - halfPayout,
+        });
+        const walletId = userWalletId(m.id);
+        const w = wallets.get(walletId)!;
+        wallets.set(walletId, { ...w, balance: w.balance + halfPayout });
+        stagePaymentAndLedger(tx, group, {
+          userId: m.id,
+          userName: m.name,
+          position: m.position ?? 0,
+          amount: halfPayout,
+          cycleNumber: nextCycle,
+          ledgerKind: "payout",
+          paymentType: "payout",
+          note: "Second half",
+        });
+        secondHalfPayouts += 1;
+      }
+
+      const potAfter = wallets.get(groupPotId(group.id))!;
+      if (potAfter.balance > 0) {
+        const admin = active.find((m) => m.role === "admin");
+        const half = potAfter.balance / 2;
+        if (admin) {
+          const walletId = userWalletId(admin.id);
+          const w = wallets.get(walletId)!;
+          wallets.set(walletId, { ...w, balance: w.balance + half });
+        }
+        const platform = wallets.get(PLATFORM_WALLET_ID)!;
+        wallets.set(PLATFORM_WALLET_ID, {
+          ...platform,
+          balance: platform.balance + half,
+        });
+        wallets.set(groupPotId(group.id), { ...potAfter, balance: 0 });
+        leftover = { adminShare: half, platformShare: half };
+      }
+    }
+
+    // ── PERSIST WALLETS + GROUP UPDATE ────────────────────────────────────
+    for (const [walletId, state] of wallets) {
+      const ref =
+        walletId === PLATFORM_WALLET_ID
+          ? platformRef
+          : walletId === groupPotId(group.id)
+            ? potRef
+            : doc(firestore, "mockWallets", walletId);
+      tx.set(ref, {
+        balance: state.balance,
+        currency: state.currency,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    tx.update(groupRef, {
+      currentCycle: nextCycle,
+      positionsLocked: true,
+      ...(markedCompleted ? { status: "completed" } : {}),
+    });
+
+    return {
+      cycleRan: nextCycle,
+      phase,
+      contributions: contributingMembers.length,
+      skipped,
+      firstHalfPayouts,
+      secondHalfPayouts,
+      leftover,
+      markedCompleted,
+    };
   });
 
-  // Auto-run the escalation detector after every cycle. It no-ops for Phase 1
-  // cycles and for groups whose flag is already set, so the cost is one
-  // group-doc read most of the time. Closes the flag loop on the panel
-  // without needing the mobile app to open the group.
+  // Escalation detector runs OUTSIDE the transaction because it needs to
+  // see the committed currentCycle and read /payments docs that were just
+  // written. Failure here doesn't roll back the cycle write — the cycle
+  // is a success in its own right; the flag is a follow-up.
   const escalation = await runEscalationDetector(group.id);
-
-  return {
-    cycleRan: nextCycle,
-    phase,
-    contributions: contributingMembers.length,
-    skipped,
-    firstHalfPayouts,
-    secondHalfPayouts,
-    leftover,
-    markedCompleted,
-    escalation,
-  };
+  return { ...result, escalation };
 }

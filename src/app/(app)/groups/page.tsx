@@ -18,7 +18,9 @@ import { EscalationBadge } from "@/components/escalation-badge";
 import { GroupDetailSheet } from "./group-detail-sheet";
 import { NewMockGroupDialog } from "./new-mock-group-dialog";
 import { isMockMoneyGroup, phaseLabelForCycle, subscribeGroups, type Group } from "@/lib/groups";
-import { Beaker } from "lucide-react";
+import { trashAllMockGroups } from "@/lib/mock-groups";
+import { Beaker, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -60,6 +62,26 @@ export default function GroupsPage() {
               Live view of every tontine on the platform. Click a row for details and actions.
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Delete every mock group + synthetic user + mock wallet + payment/ledger entry? This is a nuke.",
+                )
+              ) return;
+              try {
+                const n = await trashAllMockGroups();
+                toast.success(`Trashed ${n} mock group(s).`);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : String(e));
+              }
+            }}
+            className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+          >
+            <Trash2 /> Nuke all mock groups
+          </Button>
           <NewMockGroupDialog onCreated={(id) => setSelectedId(id)} />
         </div>
         <div className="relative max-w-sm">

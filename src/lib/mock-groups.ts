@@ -15,7 +15,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   serverTimestamp,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { firestore } from "./firebase";
@@ -199,6 +201,19 @@ export async function refillMemberWallets(
     });
   }
   return targets.length;
+}
+
+/** Trashes every mock group on the platform in one go. Returns the number
+ *  deleted. Used to hit a clean slate when a series of tests has left the
+ *  Firestore data messy. Non-mock groups are never touched. */
+export async function trashAllMockGroups(): Promise<number> {
+  const snap = await getDocs(
+    query(collection(firestore, "groups"), where("moneyProvider", "==", "mock")),
+  );
+  for (const d of snap.docs) {
+    await trashMockGroup(d.id);
+  }
+  return snap.docs.length;
 }
 
 /** Deletes a mock group and every artifact it created: member docs,
