@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EscalationBadge } from "@/components/escalation-badge";
 import { GroupDetailSheet } from "./group-detail-sheet";
 import { NewMockGroupDialog } from "./new-mock-group-dialog";
-import { isMockMoneyGroup, securedPhase, subscribeGroups, type Group } from "@/lib/groups";
+import { isMockMoneyGroup, phaseLabelForCycle, subscribeGroups, type Group } from "@/lib/groups";
 import { Beaker } from "lucide-react";
 
 export default function GroupsPage() {
@@ -95,7 +95,8 @@ export default function GroupsPage() {
               </TableRow>
             )}
             {filtered?.map((g) => {
-              const phase = securedPhase(g);
+              const current = g.currentCycle ?? 0;
+              const phaseLabel = phaseLabelForCycle(g, current);
               return (
                 <TableRow
                   key={g.id}
@@ -126,9 +127,11 @@ export default function GroupsPage() {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {g.type === "secured"
-                      ? `${phase}${g.currentCycle ? ` · ${g.currentCycle}/${g.memberCount}` : ""}`
-                      : g.currentCycle
-                        ? `${g.currentCycle}/${g.memberCount}`
+                      ? current > 0
+                        ? `${phaseLabel} · ${current}/${g.memberCount}`
+                        : `Not started · 0/${g.memberCount}`
+                      : current > 0
+                        ? `${current}/${g.memberCount}`
                         : "—"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{g.memberCount}</TableCell>

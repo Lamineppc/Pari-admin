@@ -35,7 +35,9 @@ import {
 } from "@/lib/money/mock/mock-payment-provider";
 import {
   previewNextCycle,
+  runEscalationDetector,
   runNextCycle,
+  type EscalationDiagnostic,
   type SimulatorPreview,
   type SimulatorRunResult,
 } from "@/lib/simulator";
@@ -69,7 +71,7 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -124,6 +126,20 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function checkEscalation() {
+    if (!group) return;
+    setBusy("detect");
+    try {
+      const d = await runEscalationDetector(group.id);
+      surfaceEscalationDiagnostic(d, group.currency);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Detector error: ${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function refillWallets() {
     if (!group) return;
@@ -202,10 +218,8 @@ export function GroupDetailSheet({
       toast.success(
         `Cycle ${result.cycleRan} (${result.phase}): ${parts.join(", ") || "no writes"}${result.markedCompleted ? " · rotation completed" : ""}`,
       );
-      if (result.escalationFlagged) {
-        toast.warning(
-          `Escalation flag raised: ${result.escalationFlagged}. Refresh to see intervention actions.`,
-        );
+      if (result.escalation) {
+        surfaceEscalationDiagnostic(result.escalation, group.currency);
       }
       // Skip selection persists across runs — the detector relies on
       // consistent missed cycles, and resetting after every click meant
@@ -496,6 +510,14 @@ export function GroupDetailSheet({
                   amount={group.amount}
                   memberCount={group.memberCount}
                 />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={checkEscalation}
+                >
+                  <ShieldPlus /> Check escalation now (diagnostic)
+                </Button>
               </div>
             </>
           )}
@@ -715,6 +737,42 @@ function SimulatorPanel({
       </details>
     </div>
   );
+}
+
+function surfaceEscalationDiagnostic(d: EscalationDiagnostic, _currency: string) {
+  void _currency;
+  if (d.flagWritten) {
+    toast.warning(
+      `Escalation flag raised: ${d.flagWritten}. Refresh to see intervention actions.`,
+    );
+    return;
+  }
+  switch (d.reason) {
+    case "still_phase_1":
+      toast.message(
+        `Still in Phase 1 (cycle ${d.currentCycle}/${d.memberCount}, halfway ${d.halfway}). Detector fires once cycle × 2 > memberCount.`,
+      );
+      return;
+    case "no_delinquency":
+      toast.message(
+        `No delinquency: admin paid ${d.adminPhase1Paid}/${d.phase1CyclesExpected} Phase 1 cycles, manager paid ${d.managerPhase1Paid ?? "n/a"}/${d.phase1CyclesExpected}. Did you tick admin in the skip checklist before every cycle?`,
+      );
+      return;
+    case "flag_already_set":
+      toast.message("Flag is already set on this group.");
+      return;
+    case "not_secured":
+      toast.message("This is a Traditional group — escalation flag doesn't apply.");
+      return;
+    case "no_admin":
+      toast.message("Group has no createdBy — nothing to check.");
+      return;
+    case "group_missing":
+      toast.error("Group not found.");
+      return;
+    default:
+      return;
+  }
 }
 
 function Field({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

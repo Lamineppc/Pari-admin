@@ -119,6 +119,22 @@ export function securedPhase(g: Pick<Group, "type" | "currentCycle" | "memberCou
   return c <= halfwayCycle(g) ? "collateral" : "distribution";
 }
 
+/** Human phase label for a *specific* cycle number, used for surfaces that
+ *  need to describe both the last-completed cycle and the next one. Mirrors
+ *  the same halfway-based rule as securedPhase but takes the cycle as
+ *  input so callers don't have to fake a group with a swapped
+ *  currentCycle. */
+export function phaseLabelForCycle(
+  g: Pick<Group, "type" | "memberCount">,
+  cycleNumber: number,
+): string {
+  if (g.type !== "secured") return "—";
+  if (cycleNumber <= 0) return "Not started";
+  if (cycleNumber > g.memberCount) return "Closed";
+  if (cycleNumber === g.memberCount) return "Terminal";
+  return cycleNumber <= halfwayCycle(g) ? "Phase 1" : "Phase 2";
+}
+
 // Mirrors FirestoreService.transferOwnershipToManager: batch-swaps
 // createdBy + roles, and clears the escalation flag atomically.
 export async function transferOwnershipToManager(groupId: string): Promise<void> {

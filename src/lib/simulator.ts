@@ -66,7 +66,7 @@ export type SimulatorRunResult = {
   secondHalfPayouts: number;
   leftover?: { adminShare: number; platformShare: number };
   markedCompleted: boolean;
-  escalationFlagged?: "admin_default" | "manager_default" | "both_default" | null;
+  escalation?: EscalationDiagnostic;
 };
 
 export type RunNextCycleOptions = {
@@ -78,30 +78,69 @@ export type RunNextCycleOptions = {
 
 const PLATFORM_WALLET_ID = "platform:pari";
 
+export type EscalationDiagnostic = {
+  reason:
+    | "group_missing"
+    | "not_secured"
+    | "flag_already_set"
+    | "still_phase_1"
+    | "no_admin"
+    | "no_delinquency"
+    | "flagged";
+  currentCycle: number;
+  memberCount: number;
+  halfway: number;
+  phase1CyclesExpected: number;
+  adminUid: string;
+  managerUid: string | null;
+  adminPhase1Paid: number;
+  managerPhase1Paid: number | null;
+  adminDefaulted: boolean;
+  managerDefaulted: boolean;
+  flagWritten: "admin_default" | "manager_default" | "both_default" | null;
+};
+
 /**
  * TS port of FirestoreService.flagAdminEscalationIfNeeded in the mobile
  * repo. Runs after every simulator cycle so the escalation loop closes
  * on the panel — no more "open the group on the emulator to trigger it".
  * Idempotent: skips if the group already carries a flag or if the group
- * isn't past Phase 1 yet.
- *
- * Returns the flag that was written (or null if nothing was written).
+ * isn't past Phase 1 yet. Returns a diagnostic describing exactly what
+ * it decided so callers can surface a helpful message when nothing
+ * writes.
  */
 export async function runEscalationDetector(
   groupId: string,
-): Promise<"admin_default" | "manager_default" | "both_default" | null> {
+): Promise<EscalationDiagnostic> {
+  const empty: EscalationDiagnostic = {
+    reason: "group_missing",
+    currentCycle: 0,
+    memberCount: 0,
+    halfway: 0,
+    phase1CyclesExpected: 0,
+    adminUid: "",
+    managerUid: null,
+    adminPhase1Paid: 0,
+    managerPhase1Paid: null,
+    adminDefaulted: false,
+    managerDefaulted: false,
+    flagWritten: null,
+  };
+
   const groupSnap = await getDoc(doc(firestore, "groups", groupId));
-  if (!groupSnap.exists()) return null;
+  if (!groupSnap.exists()) return empty;
   const g = groupSnap.data();
-  if (g.type !== "secured") return null;
-  if (g.adminEscalationFlag) return null;
   const currentCycle = Number(g.currentCycle ?? 0);
   const memberCount = Number(g.memberCount ?? 1);
-  if (currentCycle * 2 <= memberCount) return null; // still Phase 1
   const halfway = Math.floor(memberCount / 2);
-  if (halfway <= 0) return null;
+  const base = { ...empty, currentCycle, memberCount, halfway, phase1CyclesExpected: halfway };
+
+  if (g.type !== "secured") return { ...base, reason: "not_secured" };
+  if (g.adminEscalationFlag) return { ...base, reason: "flag_already_set" };
+  if (currentCycle * 2 <= memberCount) return { ...base, reason: "still_phase_1" };
+  if (halfway <= 0) return { ...base, reason: "still_phase_1" };
   const adminUid = (g.createdBy as string | undefined) ?? "";
-  if (!adminUid) return null;
+  if (!adminUid) return { ...base, reason: "no_admin" };
 
   const managersSnap = await getDocs(
     query(
@@ -129,14 +168,28 @@ export async function runEscalationDetector(
     return paidCycles.size;
   }
 
-  const adminPaid = await phase1PaidCount(adminUid);
-  const adminDefaulted = adminPaid < halfway;
+  const adminPhase1Paid = await phase1PaidCount(adminUid);
+  const adminDefaulted = adminPhase1Paid < halfway;
+  let managerPhase1Paid: number | null = null;
   let managerDefaulted = false;
   if (managerUid && managerUid !== adminUid) {
-    const managerPaid = await phase1PaidCount(managerUid);
-    managerDefaulted = managerPaid < halfway;
+    managerPhase1Paid = await phase1PaidCount(managerUid);
+    managerDefaulted = managerPhase1Paid < halfway;
   }
-  if (!adminDefaulted && !managerDefaulted) return null;
+
+  const diagnostic: EscalationDiagnostic = {
+    ...base,
+    reason: "no_delinquency",
+    adminUid,
+    managerUid,
+    adminPhase1Paid,
+    managerPhase1Paid,
+    adminDefaulted,
+    managerDefaulted,
+    flagWritten: null,
+  };
+
+  if (!adminDefaulted && !managerDefaulted) return diagnostic;
 
   const flag =
     adminDefaulted && managerDefaulted
@@ -156,7 +209,7 @@ export async function runEscalationDetector(
     adminEscalationFlaggedAt: serverTimestamp(),
     adminEscalationReason: reason,
   });
-  return flag;
+  return { ...diagnostic, reason: "flagged", flagWritten: flag };
 }
 
 function toMember(snap: QueryDocumentSnapshot): SimulatorMember {
@@ -502,7 +555,7 @@ export async function runNextCycle(
   // cycles and for groups whose flag is already set, so the cost is one
   // group-doc read most of the time. Closes the flag loop on the panel
   // without needing the mobile app to open the group.
-  const escalationFlagged = await runEscalationDetector(group.id).catch(() => null);
+  const escalation = await runEscalationDetector(group.id);
 
   return {
     cycleRan: nextCycle,
@@ -513,6 +566,6 @@ export async function runNextCycle(
     secondHalfPayouts,
     leftover,
     markedCompleted,
-    escalationFlagged,
+    escalation,
   };
 }
