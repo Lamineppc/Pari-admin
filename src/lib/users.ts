@@ -16,6 +16,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { firebaseAuth, firestore } from "./firebase";
+import { writeAudit } from "./audit";
 
 // Mirrors lib/models/platform_user.dart on mobile.
 export type BanType = "soft" | "hard";
@@ -111,6 +112,14 @@ export async function exitSimulationEnvironment(uid: string): Promise<number> {
     count += 1;
   }
   await updateDoc(doc(firestore, "users", uid), { isTestAccount: false });
+  await writeAudit({
+    action: "exit_simulation",
+    targetType: "user",
+    targetId: uid,
+    test: true,
+    before: { isTestAccount: true },
+    after: { isTestAccount: false, leftGroups: count },
+  });
   return count;
 }
 
@@ -120,6 +129,14 @@ export async function exitSimulationEnvironment(uid: string): Promise<number> {
 // isTestAccount on future joins, so the two universes stay decoupled.
 export async function setUserIsTestAccount(uid: string, isTestAccount: boolean): Promise<void> {
   await updateDoc(doc(firestore, "users", uid), { isTestAccount });
+  await writeAudit({
+    action: "set_test_account",
+    targetType: "user",
+    targetId: uid,
+    test: isTestAccount, // flipping TO test = test action; flipping FROM = still test-flow
+    before: { isTestAccount: !isTestAccount },
+    after: { isTestAccount },
+  });
 }
 
 export async function setUserBan(
@@ -128,10 +145,28 @@ export async function setUserBan(
   reason: string = "",
 ): Promise<void> {
   const isBanning = banType !== null;
+  const before = await getDoc(doc(firestore, "users", uid));
+  const beforeData = before.exists()
+    ? (before.data() as { banType?: string; isTestAccount?: boolean })
+    : {};
   await updateDoc(doc(firestore, "users", uid), {
     banType: banType,
     banReason: isBanning ? reason : null,
     banAt: isBanning ? serverTimestamp() : null,
+  });
+  await writeAudit({
+    action:
+      banType === "hard"
+        ? "ban_user_hard"
+        : banType === "soft"
+          ? "ban_user_soft"
+          : "restore_user",
+    targetType: "user",
+    targetId: uid,
+    test: Boolean(beforeData.isTestAccount ?? false) || uid.startsWith("sim_"),
+    before: { banType: beforeData.banType ?? null },
+    after: { banType, banReason: isBanning ? reason : null },
+    reason: reason || null,
   });
 
   // No self-notifications (mirrors _sendNotification's early return).

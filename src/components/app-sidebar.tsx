@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  FileText,
   LayoutDashboard,
   Users,
   UsersRound,
@@ -30,6 +31,7 @@ const platformNav = [
 ];
 
 const opsNav = [
+  { title: "Audit log", href: "/audit-log", icon: FileText },
   { title: "Cycle correction", href: "/cycle-correction", icon: Wrench },
 ];
 

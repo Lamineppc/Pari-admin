@@ -29,6 +29,7 @@ import {
   userWalletId,
   type Wallet,
 } from "@/lib/money/mock/mock-payment-provider";
+import { writeAudit } from "@/lib/audit";
 
 export function UserDetailSheet({
   user,
@@ -142,6 +143,14 @@ export function UserDetailSheet({
       await mockPaymentProvider.topUp({
         walletId: userWalletId(user!.uid),
         amount,
+      });
+      await writeAudit({
+        action: "top_up_wallet",
+        targetType: "wallet",
+        targetId: userWalletId(user!.uid),
+        test: true,
+        after: { amount, currency: "CFA" },
+        metadata: { userUid: user!.uid },
       });
       toast.success(`Topped up ${amount.toLocaleString()} CFA.`);
     } catch (e) {

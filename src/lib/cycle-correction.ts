@@ -8,12 +8,14 @@ import {
   collection,
   doc,
   deleteField,
+  getDoc,
   getDocs,
   query,
   where,
   writeBatch,
 } from "firebase/firestore";
 import { firestore } from "./firebase";
+import { writeAudit } from "./audit";
 
 export type PaymentModel = {
   id: string;
@@ -81,11 +83,29 @@ export async function wipeCycleData(
     getDocs(query(membersCol, where("payoutCycle", "==", cycleNumber))),
   ]);
 
+  const groupBefore = await getDoc(groupRef);
+  const isTest =
+    (groupBefore.data() as { moneyProvider?: string } | undefined)
+      ?.moneyProvider === "mock";
+
   const batch = writeBatch(firestore);
   for (const d of paymentSnap.docs) batch.delete(d.ref);
   for (const d of memberSnap.docs) batch.update(d.ref, { payoutCycle: deleteField() });
   batch.update(groupRef, { currentCycle: cycleNumber });
   await batch.commit();
+
+  await writeAudit({
+    action: "wipe_cycle_data",
+    targetType: "cycle",
+    targetId: `${groupId}:${cycleNumber}`,
+    test: isTest,
+    after: {
+      paymentsDeleted: paymentSnap.size,
+      membersUnpaid: memberSnap.size,
+      currentCycleResetTo: cycleNumber,
+    },
+    metadata: { groupId, cycleNumber },
+  });
 
   return {
     paymentsDeleted: paymentSnap.size,

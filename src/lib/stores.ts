@@ -12,6 +12,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { firebaseAuth, firestore } from "./firebase";
+import { writeAudit } from "./audit";
 
 // Mirrors lib/models/store_model.dart on mobile.
 export type StoreStatus = "pending" | "active" | "rejected" | "revoked";
@@ -76,6 +77,14 @@ export async function approveStore(store: Pick<Store, "id" | "ownerId" | "storeN
     title: "Store approved",
     body: `Your store "${store.storeName}" has been approved. You can now list items as a store vendor.`,
   });
+  await writeAudit({
+    action: "approve_store",
+    targetType: "store",
+    targetId: store.id,
+    test: store.ownerId.startsWith("sim_"),
+    after: { status: "active" },
+    metadata: { ownerId: store.ownerId, storeName: store.storeName },
+  });
 }
 
 export async function rejectStore(
@@ -93,6 +102,15 @@ export async function rejectStore(
       ? `Your application for "${store.storeName}" was not approved: ${reason}`
       : `Your application for "${store.storeName}" was not approved.`,
   });
+  await writeAudit({
+    action: "reject_store",
+    targetType: "store",
+    targetId: store.id,
+    test: store.ownerId.startsWith("sim_"),
+    after: { status: "rejected", rejectionReason: reason || null },
+    reason: reason || null,
+    metadata: { ownerId: store.ownerId, storeName: store.storeName },
+  });
 }
 
 export async function revokeStore(
@@ -109,5 +127,14 @@ export async function revokeStore(
     body: reason
       ? `Your store "${store.storeName}" access has been revoked: ${reason}`
       : `Your store "${store.storeName}" access has been revoked.`,
+  });
+  await writeAudit({
+    action: "revoke_store",
+    targetType: "store",
+    targetId: store.id,
+    test: store.ownerId.startsWith("sim_"),
+    after: { status: "revoked", rejectionReason: reason || null },
+    reason: reason || null,
+    metadata: { ownerId: store.ownerId, storeName: store.storeName },
   });
 }

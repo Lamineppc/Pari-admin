@@ -19,6 +19,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { groupPotId, userWalletId } from "./money/mock/mock-payment-provider";
+import { writeAudit } from "./audit";
 import { firebaseAuth, firestore } from "./firebase";
 
 // Mirrors the subset of lib/models/group_model.dart used by the admin panel.
@@ -105,7 +106,19 @@ export function subscribeGroups(cb: (groups: Group[]) => void, onError?: (e: Err
 
 // Freeze / resume a group. Mirrors FirestoreService.setGroupStatus in mobile.
 export async function setGroupStatus(groupId: string, status: GroupStatus) {
+  const before = await getDoc(doc(firestore, "groups", groupId));
+  const beforeData = before.exists()
+    ? (before.data() as { status?: string; moneyProvider?: string })
+    : {};
   await updateDoc(doc(firestore, "groups", groupId), { status });
+  await writeAudit({
+    action: "set_group_status",
+    targetType: "group",
+    targetId: groupId,
+    test: beforeData.moneyProvider === "mock",
+    before: { status: beforeData.status ?? null },
+    after: { status },
+  });
 }
 
 // Half-cycle boundary (floor(N/2)). Mirrors GroupModel.halfwayCycle.
@@ -168,15 +181,35 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
   batch.update(doc(membersCol, managerUid), { role: "admin" });
   batch.update(doc(membersCol, formerAdminUid), { role: "member" });
   await batch.commit();
+  await writeAudit({
+    action: "promote_manager_to_admin",
+    targetType: "group",
+    targetId: groupId,
+    test: (groupSnap.data() as { moneyProvider?: string })?.moneyProvider === "mock",
+    before: { createdBy: formerAdminUid, managerRole: "manager", adminRole: "admin" },
+    after: { createdBy: managerUid, managerRole: "admin", formerAdminRole: "member" },
+  });
 }
 
 // Clear an escalation flag without transferring ownership. Useful when the
 // super admin has verified a false-positive and wants to dismiss the flag.
 export async function clearAdminEscalation(groupId: string): Promise<void> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  const flagBefore = groupSnap.exists()
+    ? (groupSnap.data() as { adminEscalationFlag?: string; moneyProvider?: string })
+    : {};
   await updateDoc(doc(firestore, "groups", groupId), {
     adminEscalationFlag: deleteField(),
     adminEscalationFlaggedAt: deleteField(),
     adminEscalationReason: deleteField(),
+  });
+  await writeAudit({
+    action: "dismiss_escalation",
+    targetType: "group",
+    targetId: groupId,
+    test: flagBefore.moneyProvider === "mock",
+    before: { adminEscalationFlag: flagBefore.adminEscalationFlag ?? null },
+    after: { adminEscalationFlag: null },
   });
 }
 
@@ -187,10 +220,20 @@ export async function flagAdminEscalation(
   flag: AdminEscalationFlag,
   reason: string,
 ): Promise<void> {
+  const snap = await getDoc(doc(firestore, "groups", groupId));
   await updateDoc(doc(firestore, "groups", groupId), {
     adminEscalationFlag: flag,
     adminEscalationFlaggedAt: serverTimestamp(),
     adminEscalationReason: reason,
+  });
+  await writeAudit({
+    action: "flag_escalation_manual",
+    targetType: "group",
+    targetId: groupId,
+    test: (snap.data() as { moneyProvider?: string })?.moneyProvider === "mock",
+    before: { adminEscalationFlag: null },
+    after: { adminEscalationFlag: flag },
+    reason,
   });
 }
 
@@ -251,6 +294,14 @@ export async function takeOverAsCaretaker(groupId: string): Promise<void> {
   });
 
   await batch.commit();
+  await writeAudit({
+    action: "take_over_as_caretaker",
+    targetType: "group",
+    targetId: groupId,
+    test: (data as { moneyProvider?: string })?.moneyProvider === "mock",
+    before: { createdBy: formerAdminUid, flag: flag ?? null, managerUid },
+    after: { createdBy: superAdmin.uid, caretakerBy: superAdmin.uid, flag: null },
+  });
 }
 
 // Simulation helper — lets the signed-in super admin drop themselves into
@@ -284,6 +335,13 @@ export async function addMeAsObserver(groupId: string): Promise<void> {
     position: 999,
     joinedAt: serverTimestamp(),
     observer: true,
+  });
+  await writeAudit({
+    action: "add_me_as_observer",
+    targetType: "group",
+    targetId: groupId,
+    test: true, // only offered on mock groups
+    after: { observerUid: me.uid, position: 999, role: "member", observer: true },
   });
 }
 
@@ -593,6 +651,23 @@ export async function kickDefaultedAdmin(groupId: string): Promise<{
       });
       tx.update(doc(membersCol, managerUid), { role: "admin" });
     }
+  });
+
+  await writeAudit({
+    action: "kick_defaulted_admin",
+    targetType: "group",
+    targetId: groupId,
+    test: true, // kickDefaultedAdmin only runs on mock groups today
+    before: { flag, createdBy: adminUid, managerUid },
+    after: {
+      newAdminUid,
+      caretaker: takeoverAsCaretaker,
+      kickedUids: isBoth && managerUid ? [adminUid, managerUid] : [adminUid],
+      refunds:
+        isBoth && managerUid
+          ? { [adminUid]: adminRefund, [managerUid]: managerRefund }
+          : { [adminUid]: adminRefund },
+    },
   });
 
   return {

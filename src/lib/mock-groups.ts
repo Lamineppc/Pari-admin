@@ -26,6 +26,7 @@ import {
   mockPaymentProvider,
   userWalletId,
 } from "./money/mock/mock-payment-provider";
+import { writeAudit } from "./audit";
 
 export type CreateMockGroupInput = {
   name: string;
@@ -153,6 +154,21 @@ export async function createMockGroup(
   // subscribeWallet already emits { balance: 0 } when the doc is missing,
   // so the pot-balance card renders "0" immediately without a seed.
 
+  await writeAudit({
+    action: "create_mock_group",
+    targetType: "group",
+    targetId: groupRef.id,
+    test: true,
+    after: {
+      name,
+      memberCount,
+      amount,
+      currency,
+      startingBalance,
+      memberUids,
+    },
+  });
+
   return {
     groupId: groupRef.id,
     memberUids,
@@ -200,6 +216,13 @@ export async function refillMemberWallets(
       currency: (g.currency as string | undefined) ?? "CFA",
     });
   }
+  await writeAudit({
+    action: "refill_member_wallets",
+    targetType: "group",
+    targetId: groupId,
+    test: true,
+    after: { walletsTopped: targets.length, amountPerMember },
+  });
   return targets.length;
 }
 
@@ -210,9 +233,17 @@ export async function trashAllMockGroups(): Promise<number> {
   const snap = await getDocs(
     query(collection(firestore, "groups"), where("moneyProvider", "==", "mock")),
   );
+  const ids = snap.docs.map((d) => d.id);
   for (const d of snap.docs) {
     await trashMockGroup(d.id);
   }
+  await writeAudit({
+    action: "trash_all_mock_groups",
+    targetType: "platform",
+    targetId: "all",
+    test: true,
+    after: { deletedCount: ids.length, groupIds: ids },
+  });
   return snap.docs.length;
 }
 
@@ -265,4 +296,21 @@ export async function trashMockGroup(groupId: string): Promise<void> {
   ledgerSnap.docs.forEach((d) => batch.delete(d.ref));
   batch.delete(groupRef);
   await batch.commit();
+
+  await writeAudit({
+    action: "trash_mock_group",
+    targetType: "group",
+    targetId: groupId,
+    test: true,
+    before: {
+      name: (g.name as string | undefined) ?? "",
+      memberCount: memberIds.length,
+      syntheticUids: syntheticUids.length,
+    },
+    after: {
+      membersDeleted: membersSnap.size,
+      paymentsDeleted: paymentsSnap.size,
+      ledgerDeleted: ledgerSnap.size,
+    },
+  });
 }

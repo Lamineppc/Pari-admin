@@ -31,6 +31,7 @@ import {
   type Group,
   type LedgerKind,
 } from "./groups";
+import { writeAudit } from "./audit";
 import {
   groupPotId,
   mockPaymentProvider,
@@ -213,6 +214,17 @@ export async function runEscalationDetector(
     adminEscalationFlag: flag,
     adminEscalationFlaggedAt: serverTimestamp(),
     adminEscalationReason: reason,
+  });
+  await writeAudit({
+    action: "flag_escalation_auto",
+    targetType: "group",
+    targetId: groupId,
+    // Auto-detector only writes when the group is past halfway on a
+    // Secured group; if it's a mock group we tag test. Non-mock reals
+    // are logged as live actions.
+    test: (g.moneyProvider as string | undefined) === "mock",
+    after: { adminEscalationFlag: flag, adminPhase1Paid, managerPhase1Paid },
+    reason,
   });
   return { ...diagnostic, reason: "flagged", flagWritten: flag };
 }
