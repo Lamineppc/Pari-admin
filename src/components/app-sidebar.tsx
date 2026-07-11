@@ -11,6 +11,7 @@ import {
   UsersRound,
   Store,
   ShieldCheck,
+  UserX,
   Wrench,
 } from "lucide-react";
 import {
@@ -35,6 +36,7 @@ const platformNav = [
 
 const opsNav = [
   { title: "Notifications", href: "/notifications", icon: Bell },
+  { title: "Kicks + refunds", href: "/kicks", icon: UserX },
   { title: "Audit log", href: "/audit-log", icon: FileText },
   { title: "Cycle correction", href: "/cycle-correction", icon: Wrench },
 ];
