@@ -15,7 +15,6 @@ import {
   updateDoc,
   where,
   type QueryDocumentSnapshot,
-  type Timestamp,
 } from "firebase/firestore";
 import { firebaseAuth, firestore } from "./firebase";
 
@@ -57,6 +56,17 @@ export type SupportTicket = {
   lastReplyAt: Date | null;
 };
 
+function toDateSafe(x: unknown): Date | null {
+  if (!x) return null;
+  if (typeof x === "string") {
+    const d = new Date(x);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const maybeTs = x as { toDate?: () => Date };
+  if (typeof maybeTs.toDate === "function") return maybeTs.toDate();
+  return null;
+}
+
 function toTicket(snap: QueryDocumentSnapshot): SupportTicket {
   const d = snap.data();
   const notes = (d.internalNotes as Array<Record<string, unknown>> | undefined) ?? [];
@@ -71,18 +81,18 @@ function toTicket(snap: QueryDocumentSnapshot): SupportTicket {
     status: (d.status as TicketStatus | undefined) ?? "open",
     priority: (d.priority as TicketPriority | undefined) ?? "normal",
     groupId: (d.groupId as string | undefined) ?? null,
-    createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
-    updatedAt: (d.updatedAt as Timestamp | undefined)?.toDate() ?? null,
+    createdAt: toDateSafe(d.createdAt),
+    updatedAt: toDateSafe(d.updatedAt),
     assignedTo: (d.assignedTo as string | undefined) ?? null,
-    resolvedAt: (d.resolvedAt as Timestamp | undefined)?.toDate() ?? null,
+    resolvedAt: toDateSafe(d.resolvedAt),
     internalNotes: notes.map((n) => ({
       authorUid: (n.authorUid as string | undefined) ?? "",
       authorEmail: (n.authorEmail as string | undefined) ?? "",
       body: (n.body as string | undefined) ?? "",
-      createdAt: (n.createdAt as Timestamp | undefined)?.toDate() ?? null,
+      createdAt: toDateSafe(n.createdAt),
     })),
     lastReply: (d.lastReply as string | undefined) ?? null,
-    lastReplyAt: (d.lastReplyAt as Timestamp | undefined)?.toDate() ?? null,
+    lastReplyAt: toDateSafe(d.lastReplyAt),
   };
 }
 
