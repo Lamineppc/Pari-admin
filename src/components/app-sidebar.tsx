@@ -8,6 +8,7 @@ import {
   UsersRound,
   Store,
   ShieldCheck,
+  Wrench,
 } from "lucide-react";
 import {
   Sidebar,
@@ -26,6 +27,10 @@ const platformNav = [
   { title: "Groups", href: "/groups", icon: UsersRound },
   { title: "Users", href: "/users", icon: Users },
   { title: "Store applications", href: "/store-applications", icon: Store },
+];
+
+const opsNav = [
+  { title: "Cycle correction", href: "/cycle-correction", icon: Wrench },
 ];
 
 export function AppSidebar() {
@@ -49,6 +54,27 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {platformNav.map((item) => {
+                const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      isActive={active}
+                      render={<Link href={item.href} />}
+                    >
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Operations</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {opsNav.map((item) => {
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <SidebarMenuItem key={item.href}>
