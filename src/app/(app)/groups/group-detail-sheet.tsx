@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
+import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { EscalationBadge } from "@/components/escalation-badge";
 import {
+  addMeAsObserver,
   cancelAndRefundGroup,
   clearAdminEscalation,
   isMockMoneyGroup,
@@ -67,7 +68,7 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -122,6 +123,22 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function joinAsObserver() {
+    if (!group) return;
+    setBusy("join");
+    try {
+      await addMeAsObserver(group.id);
+      toast.success(
+        "Added to this mock group as an observer. Open the mobile app and it'll appear in your groups list. Your account is now a test account — flip it back via Users when you're done.",
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function runSimulate() {
     if (!group) return;
@@ -338,6 +355,20 @@ export function GroupDetailSheet({
                     {pot ? `${pot.currency} ${pot.balance.toLocaleString()}` : "…"}
                   </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={joinAsObserver}
+                >
+                  <Eye /> Add me as observer (mobile access)
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Flips your account to a test account and drops your uid into
+                  memberIds so the mobile app shows this group in your list.
+                  Position 999 keeps you out of the payout rotation. Flip back
+                  in Users when done.
+                </p>
               </div>
             </>
           )}
@@ -525,15 +556,22 @@ function SimulatorPanel({
           {preview.activeMembersList.map((m) => {
             const checked = skipSet.has(m.id);
             return (
-              <label
+              <div
                 key={m.id}
-                className="flex cursor-pointer items-center justify-between gap-3 rounded px-2 py-1 hover:bg-muted/50"
+                role="checkbox"
+                aria-checked={checked}
+                tabIndex={0}
+                onClick={() => onToggleSkip(m.id)}
+                onKeyDown={(e) => {
+                  if (e.key === " " || e.key === "Enter") {
+                    e.preventDefault();
+                    onToggleSkip(m.id);
+                  }
+                }}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded px-2 py-1 hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50"
               >
                 <span className="flex items-center gap-2">
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={() => onToggleSkip(m.id)}
-                  />
+                  <Checkbox checked={checked} tabIndex={-1} />
                   <span className="tabular-nums text-muted-foreground">
                     #{m.position ?? "?"}
                   </span>
@@ -544,12 +582,12 @@ function SimulatorPanel({
                     </span>
                   )}
                 </span>
-              </label>
+              </div>
             );
           })}
           {skipSet.size > 0 && (
             <p className="pt-1 text-[11px] italic text-muted-foreground">
-              Skipped members simulate delinquency — they'll show as missing
+              Skipped members simulate delinquency — they&apos;ll show as missing
               this cycle in the ledger. Open the group on the mobile app to
               trigger the escalation-flag detector.
             </p>

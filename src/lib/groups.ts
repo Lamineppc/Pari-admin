@@ -1,4 +1,5 @@
 import {
+  arrayUnion,
   collection,
   deleteField,
   doc,
@@ -9,6 +10,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   writeBatch,
   type QueryDocumentSnapshot,
@@ -230,6 +232,40 @@ export async function takeOverAsCaretaker(groupId: string): Promise<void> {
   });
 
   await batch.commit();
+}
+
+// Simulation helper — lets the signed-in super admin drop themselves into
+// a mock group as an observer so the mobile app renders the group in their
+// "My Groups" tab. Flips isTestAccount to true (mock groups can only host
+// test accounts under the membership rule) and adds the uid to memberIds
+// so arrayContains queries see it. The new member doc is written outside
+// the payout rotation (position 999, role 'member') so simulator math
+// isn't disturbed. Idempotent — running twice is a no-op.
+export async function addMeAsObserver(groupId: string): Promise<void> {
+  const me = firebaseAuth.currentUser;
+  if (!me) throw new Error("Not signed in.");
+
+  await updateDoc(doc(firestore, "users", me.uid), { isTestAccount: true });
+
+  const groupRef = doc(firestore, "groups", groupId);
+  await updateDoc(groupRef, {
+    memberIds: arrayUnion(me.uid),
+  });
+
+  const memberRef = doc(firestore, "groups", groupId, "members", me.uid);
+  const existing = await getDoc(memberRef);
+  if (existing.exists()) return;
+  await setDoc(memberRef, {
+    userId: me.uid,
+    name: me.displayName ?? me.email ?? "Observer",
+    email: me.email ?? "",
+    role: "member",
+    // 999 keeps the observer out of the rotation ordering used by the
+    // Secured simulator (which sorts by position).
+    position: 999,
+    joinedAt: serverTimestamp(),
+    observer: true,
+  });
 }
 
 // PR 6a — Append-only ledger entry per group. Kinds match the four money-flow
