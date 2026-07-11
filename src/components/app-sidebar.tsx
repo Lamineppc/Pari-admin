@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Bell,
   FileText,
+  Inbox,
   LayoutDashboard,
   Users,
   UsersRound,
@@ -35,6 +36,7 @@ const platformNav = [
 ];
 
 const opsNav = [
+  { title: "Support", href: "/support", icon: Inbox },
   { title: "Notifications", href: "/notifications", icon: Bell },
   { title: "Kicks + refunds", href: "/kicks", icon: UserX },
   { title: "Audit log", href: "/audit-log", icon: FileText },
