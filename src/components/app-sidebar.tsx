@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  AlertTriangle,
   FileText,
   LayoutDashboard,
   Users,
@@ -25,6 +26,7 @@ import {
 
 const platformNav = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { title: "Escalations", href: "/escalations", icon: AlertTriangle },
   { title: "Groups", href: "/groups", icon: UsersRound },
   { title: "Users", href: "/users", icon: Users },
   { title: "Store applications", href: "/store-applications", icon: Store },
