@@ -207,7 +207,10 @@ export function GroupDetailSheet({
           `Escalation flag raised: ${result.escalationFlagged}. Refresh to see intervention actions.`,
         );
       }
-      setSkipSet(new Set());
+      // Skip selection persists across runs — the detector relies on
+      // consistent missed cycles, and resetting after every click meant
+      // the user had to re-tick every time. Use "Clear selections" in
+      // the panel to reset explicitly.
       const next = await previewNextCycle(group.id);
       setSimPreview(next);
     } catch (e) {
@@ -648,7 +651,7 @@ function SimulatorPanel({
       </ul>
       <details className="rounded-md border bg-background/50 px-3 py-2 text-xs">
         <summary className="cursor-pointer select-none text-muted-foreground">
-          Skip contributions this cycle{" "}
+          Skip contributions (persists across runs){" "}
           {skipSet.size > 0 && (
             <span className="text-amber-700 dark:text-amber-300">
               ({skipSet.size} selected)
@@ -656,6 +659,19 @@ function SimulatorPanel({
           )}
         </summary>
         <div className="mt-2 flex flex-col gap-1.5">
+          {skipSet.size > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                preview.activeMembersList
+                  .filter((m) => skipSet.has(m.id))
+                  .forEach((m) => onToggleSkip(m.id))
+              }
+              className="self-end rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+            >
+              Clear all selections
+            </button>
+          )}
           {preview.activeMembersList.map((m) => {
             const checked = skipSet.has(m.id);
             return (
