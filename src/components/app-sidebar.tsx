@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   AlertTriangle,
+  Bell,
   FileText,
   LayoutDashboard,
   Users,
@@ -33,6 +34,7 @@ const platformNav = [
 ];
 
 const opsNav = [
+  { title: "Notifications", href: "/notifications", icon: Bell },
   { title: "Audit log", href: "/audit-log", icon: FileText },
   { title: "Cycle correction", href: "/cycle-correction", icon: Wrench },
 ];
