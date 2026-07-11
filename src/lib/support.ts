@@ -204,7 +204,5 @@ export async function replyToTicket(
     lastReply: body.trim(),
     lastReplyAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    // Auto-transition to in_progress if it was still open.
-    ...(t.status === "open" ? { status: "in_progress" } : {}),
   });
 }

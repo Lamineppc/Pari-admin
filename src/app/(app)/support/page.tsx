@@ -48,7 +48,7 @@ const STATUS_STYLES: Record<TicketStatus, string> = {
 
 export default function SupportPage() {
   const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
-  const [statusFilter, setStatusFilter] = useState<TicketStatus | "all">("open");
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | "all">("all");
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
