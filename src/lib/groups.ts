@@ -9,13 +9,16 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
   type QueryDocumentSnapshot,
   type Timestamp,
 } from "firebase/firestore";
+import { groupPotId, userWalletId } from "./money/mock/mock-payment-provider";
 import { firebaseAuth, firestore } from "./firebase";
 
 // Mirrors the subset of lib/models/group_model.dart used by the admin panel.
@@ -344,6 +347,262 @@ export function subscribeLedger(
     (s) => cb(s.docs.map(toLedgerEntry)),
     (err) => onError?.(err),
   );
+}
+
+/** Sums a user's Phase 1 contributions from the ledger. Used by
+ *  kickDefaultedAdmin to know what to refund. */
+async function sumPhase1Contributions(
+  groupId: string,
+  uid: string,
+  halfway: number,
+): Promise<number> {
+  const snap = await getDocs(
+    query(
+      collection(firestore, "groups", groupId, "ledger"),
+      where("userId", "==", uid),
+      where("kind", "==", "contribution"),
+    ),
+  );
+  const paidCycles = new Map<number, number>();
+  for (const d of snap.docs) {
+    const data = d.data();
+    const cn = Number(data.cycleNumber ?? 0);
+    if (cn >= 1 && cn <= halfway) {
+      // Take max — one 'contribution' entry per user/cycle by doc-id
+      // convention, but be defensive.
+      paidCycles.set(cn, Math.max(paidCycles.get(cn) ?? 0, Number(data.amount ?? 0)));
+    }
+  }
+  let total = 0;
+  for (const v of paidCycles.values()) total += v;
+  return total;
+}
+
+/** Resolves an active admin_default or both_default escalation by kicking
+ *  the delinquent parties, refunding their Phase 1 contributions from the
+ *  pot, promoting the manager (admin_default) or having the super admin
+ *  take over as caretaker (both_default), and clearing the flag — all in
+ *  a single Firestore transaction so partial failures can't split the
+ *  world.
+ *
+ *  Only implemented for mock groups today. Real-money groups throw with
+ *  a "needs PR 6b–d" message because the refund would require an Orange
+ *  Money payout via Cloud Functions.
+ */
+export async function kickDefaultedAdmin(groupId: string): Promise<{
+  kickedUids: string[];
+  refunds: Record<string, number>;
+  newAdminUid: string;
+  caretaker: boolean;
+}> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  const flag = g.adminEscalationFlag as AdminEscalationFlag | undefined;
+  if (flag !== "admin_default" && flag !== "both_default") {
+    throw new Error(
+      "This action only resolves admin_default or both_default flags.",
+    );
+  }
+  if ((g.moneyProvider as string | undefined) !== "mock") {
+    throw new Error(
+      "Kick+refund on real-money groups needs PR 6b–d (Orange Money via Cloud Functions).",
+    );
+  }
+  const adminUid = (g.createdBy as string | undefined) ?? "";
+  if (!adminUid) throw new Error("Group has no admin.");
+  const memberCount = Number(g.memberCount ?? 1);
+  const halfway = Math.floor(memberCount / 2);
+
+  const membersSnap = await getDocs(
+    collection(firestore, "groups", groupId, "members"),
+  );
+  const managerDoc = membersSnap.docs.find(
+    (d) => (d.data().role as string | undefined) === "manager",
+  );
+  const managerUid = managerDoc?.id ?? null;
+
+  const superAdmin = firebaseAuth.currentUser;
+  if (!superAdmin) throw new Error("Not signed in.");
+
+  const isBoth = flag === "both_default";
+  if (isBoth && !managerUid) {
+    throw new Error("both_default requires a manager doc to exist.");
+  }
+  const takeoverAsCaretaker = isBoth;
+  const newAdminUid = takeoverAsCaretaker
+    ? superAdmin.uid
+    : (managerUid ?? superAdmin.uid);
+
+  // Compute refunds from the ledger BEFORE the transaction — reads inside
+  // the tx would need to be tx.get() but Firestore transactions don't
+  // support queries. This is safe because the amounts were already committed
+  // and are effectively immutable.
+  const adminRefund = await sumPhase1Contributions(groupId, adminUid, halfway);
+  const managerRefund =
+    isBoth && managerUid
+      ? await sumPhase1Contributions(groupId, managerUid, halfway)
+      : 0;
+
+  const potRef = doc(firestore, "mockWallets", groupPotId(groupId));
+  const adminWalletRef = doc(firestore, "mockWallets", userWalletId(adminUid));
+  const managerWalletRef =
+    isBoth && managerUid
+      ? doc(firestore, "mockWallets", userWalletId(managerUid))
+      : null;
+  const groupRef = doc(firestore, "groups", groupId);
+  const membersCol = collection(firestore, "groups", groupId, "members");
+
+  await runTransaction(firestore, async (tx) => {
+    // READ PHASE
+    const potSnap = await tx.get(potRef);
+    const adminSnap = await tx.get(adminWalletRef);
+    const managerSnap = managerWalletRef ? await tx.get(managerWalletRef) : null;
+    let potBal = Number(potSnap.data()?.balance ?? 0);
+    const adminBal = Number(adminSnap.data()?.balance ?? 0);
+    const managerBal = managerSnap
+      ? Number(managerSnap.data()?.balance ?? 0)
+      : 0;
+    const currency =
+      (potSnap.data()?.currency as string | undefined) ??
+      (g.currency as string | undefined) ??
+      "CFA";
+
+    if (potBal < adminRefund + managerRefund) {
+      throw new Error(
+        `Pot has ${currency} ${potBal.toLocaleString()}, needs ${currency} ${(adminRefund + managerRefund).toLocaleString()} to refund defaulted party. Refill the pot first (contributions from other members).`,
+      );
+    }
+
+    // WRITE PHASE
+    // Refund admin
+    if (adminRefund > 0) {
+      potBal -= adminRefund;
+      tx.set(potRef, {
+        balance: potBal,
+        currency,
+        updatedAt: serverTimestamp(),
+      });
+      tx.set(adminWalletRef, {
+        balance: adminBal + adminRefund,
+        currency,
+        updatedAt: serverTimestamp(),
+      });
+      // Refund ledger entry
+      tx.set(
+        doc(
+          firestore,
+          "groups",
+          groupId,
+          "ledger",
+          `refund_${adminUid}_c${g.currentCycle ?? halfway}`,
+        ),
+        {
+          kind: "refund",
+          phase: "collateral",
+          userId: adminUid,
+          amount: adminRefund,
+          currency,
+          cycleNumber: g.currentCycle ?? halfway,
+          recordedBy: superAdmin.uid,
+          createdAt: serverTimestamp(),
+          note: `Refund on ${flag} escalation`,
+        },
+      );
+    }
+
+    // Refund manager (both_default only)
+    if (isBoth && managerWalletRef && managerUid && managerRefund > 0) {
+      potBal -= managerRefund;
+      tx.set(potRef, {
+        balance: potBal,
+        currency,
+        updatedAt: serverTimestamp(),
+      });
+      tx.set(managerWalletRef, {
+        balance: managerBal + managerRefund,
+        currency,
+        updatedAt: serverTimestamp(),
+      });
+      tx.set(
+        doc(
+          firestore,
+          "groups",
+          groupId,
+          "ledger",
+          `refund_${managerUid}_c${g.currentCycle ?? halfway}`,
+        ),
+        {
+          kind: "refund",
+          phase: "collateral",
+          userId: managerUid,
+          amount: managerRefund,
+          currency,
+          cycleNumber: g.currentCycle ?? halfway,
+          recordedBy: superAdmin.uid,
+          createdAt: serverTimestamp(),
+          note: `Refund on ${flag} escalation`,
+        },
+      );
+    }
+
+    // Mark defaulted parties kicked + write role changes
+    tx.update(doc(membersCol, adminUid), {
+      kicked: true,
+      kickedAt: serverTimestamp(),
+      refundAmount: adminRefund,
+      kickReason: `Defaulted on Phase 1 contributions (${flag})`,
+      role: "member",
+    });
+    if (isBoth && managerUid) {
+      tx.update(doc(membersCol, managerUid), {
+        kicked: true,
+        kickedAt: serverTimestamp(),
+        refundAmount: managerRefund,
+        kickReason: `Defaulted on Phase 1 contributions (${flag})`,
+        role: "member",
+      });
+    }
+
+    // Promote / take over
+    if (takeoverAsCaretaker) {
+      // Super admin becomes createdBy and gets a caretaker member doc.
+      tx.update(groupRef, {
+        createdBy: superAdmin.uid,
+        caretakerBy: superAdmin.uid,
+        adminEscalationFlag: deleteField(),
+        adminEscalationFlaggedAt: deleteField(),
+        adminEscalationReason: deleteField(),
+      });
+      tx.set(doc(membersCol, superAdmin.uid), {
+        userId: superAdmin.uid,
+        name: superAdmin.displayName || "Pari Support",
+        email: superAdmin.email || "",
+        role: "admin",
+        position: memberCount + 1,
+        joinedAt: serverTimestamp(),
+        caretaker: true,
+      });
+    } else if (managerUid) {
+      // Promote manager to admin.
+      tx.update(groupRef, {
+        createdBy: managerUid,
+        adminEscalationFlag: deleteField(),
+        adminEscalationFlaggedAt: deleteField(),
+        adminEscalationReason: deleteField(),
+      });
+      tx.update(doc(membersCol, managerUid), { role: "admin" });
+    }
+  });
+
+  return {
+    kickedUids: isBoth && managerUid ? [adminUid, managerUid] : [adminUid],
+    refunds: isBoth && managerUid
+      ? { [adminUid]: adminRefund, [managerUid]: managerRefund }
+      : { [adminUid]: adminRefund },
+    newAdminUid,
+    caretaker: takeoverAsCaretaker,
+  };
 }
 
 // PR 5c stub — Cancel the group and refund every member. Full implementation

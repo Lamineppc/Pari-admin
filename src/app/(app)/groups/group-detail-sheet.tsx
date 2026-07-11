@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, X, Wallet as WalletIcon } from "lucide-react";
+import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, UserX, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -18,6 +18,7 @@ import {
   cancelAndRefundGroup,
   clearAdminEscalation,
   isMockMoneyGroup,
+  kickDefaultedAdmin,
   securedPhase,
   setGroupStatus,
   subscribeLedger,
@@ -71,7 +72,7 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -126,6 +127,30 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function kickDefaulted() {
+    if (!group) return;
+    const summary =
+      group.adminEscalationFlag === "both_default"
+        ? "Kick BOTH the admin and the manager, refund their Phase 1 contributions from the pot, and take over as caretaker admin"
+        : "Kick the admin, refund their Phase 1 contributions from the pot, and promote the manager to admin";
+    if (!window.confirm(`${summary}. Continue?`)) return;
+    setBusy("kick");
+    try {
+      const r = await kickDefaultedAdmin(group.id);
+      const refundLines = Object.entries(r.refunds)
+        .map(([uid, amt]) => `${uid.slice(0, 12)}…: ${group.currency} ${amt.toLocaleString()}`)
+        .join(", ");
+      toast.success(
+        `${r.caretaker ? "Super admin took over" : "Manager promoted"}. Refunded: ${refundLines || "nothing"}.`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function checkEscalation() {
     if (!group) return;
@@ -372,6 +397,18 @@ export function GroupDetailSheet({
                 }
               >
                 <ShieldCheck /> Promote manager to admin
+              </Button>
+            )}
+            {(flag === "admin_default" || flag === "both_default") && isMock && (
+              <Button
+                variant="destructive"
+                disabled={busy !== null}
+                onClick={kickDefaulted}
+              >
+                <UserX />{" "}
+                {flag === "both_default"
+                  ? "Kick admin + manager, refund, take over"
+                  : "Kick defaulted admin, refund, promote manager"}
               </Button>
             )}
             {showCaretakerAction && !isCaretaker && (
