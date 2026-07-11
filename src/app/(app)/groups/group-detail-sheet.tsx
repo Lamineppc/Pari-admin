@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
+import { Beaker, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -32,6 +32,12 @@ import {
   mockPaymentProvider,
   type Wallet,
 } from "@/lib/money/mock/mock-payment-provider";
+import {
+  previewNextCycle,
+  runNextCycle,
+  type SimulatorPreview,
+  type SimulatorRunResult,
+} from "@/lib/simulator";
 
 const PHASE_LABELS: Record<string, string> = {
   notStarted: "Not started",
@@ -60,10 +66,11 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
+  const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
 
   useEffect(() => {
     if (!group) {
@@ -83,6 +90,27 @@ export function GroupDetailSheet({
     return unsub;
   }, [group?.id, group ? isMockMoneyGroup(group) : false]);
 
+  useEffect(() => {
+    if (!group || !isMockMoneyGroup(group) || group.type !== "secured") {
+      setSimPreview(null);
+      return;
+    }
+    let cancelled = false;
+    previewNextCycle(group.id).then((p) => {
+      if (!cancelled) setSimPreview(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    group?.id,
+    group?.currentCycle,
+    group?.memberCount,
+    group?.status,
+    group?.type,
+    group ? isMockMoneyGroup(group) : false,
+  ]);
+
   if (!group) return null;
 
   const isActive = group.status === "active";
@@ -92,6 +120,33 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function runSimulate() {
+    if (!group) return;
+    setBusy("simulate");
+    try {
+      const result: SimulatorRunResult = await runNextCycle(group.id);
+      const parts: string[] = [];
+      if (result.contributions > 0) parts.push(`${result.contributions} contribution(s)`);
+      if (result.firstHalfPayouts > 0) parts.push(`${result.firstHalfPayouts} first-half payout(s)`);
+      if (result.secondHalfPayouts > 0) parts.push(`${result.secondHalfPayouts} second-half payout(s)`);
+      if (result.leftover) {
+        parts.push(
+          `leftover split ${group.currency} ${(result.leftover.adminShare * 2).toLocaleString()}`,
+        );
+      }
+      toast.success(
+        `Cycle ${result.cycleRan} (${result.phase}): ${parts.join(", ") || "no writes"}${result.markedCompleted ? " · rotation completed" : ""}`,
+      );
+      const next = await previewNextCycle(group.id);
+      setSimPreview(next);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function run(
     kind: "promote" | "status" | "clear" | "caretaker" | "cancel",
@@ -272,6 +327,25 @@ export function GroupDetailSheet({
             </>
           )}
 
+          {isMock && group.type === "secured" && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Secured simulator
+                </div>
+                <SimulatorPanel
+                  preview={simPreview}
+                  busy={busy === "simulate"}
+                  onRun={runSimulate}
+                  currency={group.currency}
+                  amount={group.amount}
+                  memberCount={group.memberCount}
+                />
+              </div>
+            </>
+          )}
+
           <Separator />
 
           <div className="flex flex-col gap-2">
@@ -342,6 +416,74 @@ function LedgerList({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function SimulatorPanel({
+  preview,
+  busy,
+  onRun,
+  currency,
+  amount,
+  memberCount,
+}: {
+  preview: SimulatorPreview | null;
+  busy: boolean;
+  onRun: () => void;
+  currency: string;
+  amount: number;
+  memberCount: number;
+}) {
+  if (!preview) {
+    return <div className="text-xs text-muted-foreground">Loading simulator state…</div>;
+  }
+  if (!preview.ready) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+        {preview.reason}
+      </div>
+    );
+  }
+  const halfPayout = (amount * memberCount) / 2;
+  const phaseLabel = {
+    collateral: "Collateral (Phase 1)",
+    distribution: "Distribution (Phase 2)",
+    terminal: "Terminal",
+  }[preview.phase];
+  return (
+    <div className="flex flex-col gap-3 rounded-md border bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col">
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+            Next click will run
+          </span>
+          <span className="text-sm font-semibold">
+            Cycle {preview.nextCycle} — {phaseLabel}
+          </span>
+        </div>
+        <Button size="sm" onClick={onRun} disabled={busy}>
+          <FastForward /> {busy ? "Running…" : "Run next cycle"}
+        </Button>
+      </div>
+      <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <li>
+          {preview.activeMembers} × {currency} {amount.toLocaleString()} contribution(s)
+        </li>
+        {preview.firstHalfRecipients.length > 0 && (
+          <li>
+            {preview.firstHalfRecipients.length} first-half payout(s) of {currency}{" "}
+            {halfPayout.toLocaleString()} —{" "}
+            {preview.firstHalfRecipients.map((m) => m.name).join(", ")}
+          </li>
+        )}
+        {preview.secondHalfRecipients.length > 0 && (
+          <li>
+            {preview.secondHalfRecipients.length} second-half payout(s) of {currency}{" "}
+            {halfPayout.toLocaleString()} — closes the rotation
+          </li>
+        )}
+      </ul>
     </div>
   );
 }
