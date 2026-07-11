@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, Trash2, X, Wallet as WalletIcon } from "lucide-react";
+import { Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -39,7 +39,7 @@ import {
   type SimulatorPreview,
   type SimulatorRunResult,
 } from "@/lib/simulator";
-import { trashMockGroup } from "@/lib/mock-groups";
+import { refillMemberWallets, trashMockGroup } from "@/lib/mock-groups";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -69,7 +69,7 @@ export function GroupDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -124,6 +124,25 @@ export function GroupDetailSheet({
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
   const isMock = isMockMoneyGroup(group);
+
+  async function refillWallets() {
+    if (!group) return;
+    // Enough for the remaining cycles plus one buffer, sized to the group's
+    // memberCount + amount so a full rotation still fits.
+    const perMember = group.amount * group.memberCount + group.amount;
+    setBusy("refill");
+    try {
+      const count = await refillMemberWallets(group.id, perMember);
+      toast.success(
+        `Refilled ${count} wallet(s) with ${group.currency} ${perMember.toLocaleString()} each.`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function trashGroup() {
     if (!group) return;
@@ -378,6 +397,20 @@ export function GroupDetailSheet({
                     {pot ? `${pot.currency} ${pot.balance.toLocaleString()}` : "…"}
                   </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={refillWallets}
+                >
+                  <RefreshCw /> Refill member wallets
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Adds {group.currency}{" "}
+                  {(group.amount * group.memberCount + group.amount).toLocaleString()}{" "}
+                  to every non-observer member&apos;s wallet — enough for a full
+                  rotation of contributions plus one buffer.
+                </p>
                 <Button
                   variant="outline"
                   size="sm"

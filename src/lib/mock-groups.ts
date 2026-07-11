@@ -158,6 +158,49 @@ export async function createMockGroup(
   };
 }
 
+/** Tops up every non-observer, non-kicked member's mock wallet by
+ *  [amountPerMember]. Handy when a partial-failure state drained wallets
+ *  or when createMockGroup's seeding step misfired. Skips observers so a
+ *  real user acting as observer doesn't get simulation balance dropped
+ *  into their wallet. Returns the number of wallets touched. */
+export async function refillMemberWallets(
+  groupId: string,
+  amountPerMember: number,
+): Promise<number> {
+  if (!Number.isFinite(amountPerMember) || amountPerMember <= 0) {
+    throw new Error("Amount per member must be positive.");
+  }
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.moneyProvider !== "mock") {
+    throw new Error("Only mock groups can be refilled from this action.");
+  }
+
+  const membersSnap = await getDocs(
+    collection(firestore, "groups", groupId, "members"),
+  );
+  const targets = membersSnap.docs
+    .map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        observer: Boolean(data.observer ?? false),
+        kicked: Boolean(data.kicked ?? false),
+      };
+    })
+    .filter((m) => !m.observer && !m.kicked);
+
+  for (const m of targets) {
+    await mockPaymentProvider.topUp({
+      walletId: userWalletId(m.id),
+      amount: amountPerMember,
+      currency: (g.currency as string | undefined) ?? "CFA",
+    });
+  }
+  return targets.length;
+}
+
 /** Deletes a mock group and every artifact it created: member docs,
  *  payments, ledger entries, all mockWallets involved, and the synthetic
  *  test-account user docs. Non-mock groups are refused so we can never
