@@ -202,6 +202,11 @@ export function GroupDetailSheet({
       toast.success(
         `Cycle ${result.cycleRan} (${result.phase}): ${parts.join(", ") || "no writes"}${result.markedCompleted ? " · rotation completed" : ""}`,
       );
+      if (result.escalationFlagged) {
+        toast.warning(
+          `Escalation flag raised: ${result.escalationFlagged}. Refresh to see intervention actions.`,
+        );
+      }
       setSkipSet(new Set());
       const next = await previewNextCycle(group.id);
       setSimPreview(next);
@@ -277,11 +282,39 @@ export function GroupDetailSheet({
             <Field label="Frequency" value={group.frequency} />
             {group.type === "secured" && (
               <>
-                <Field label="Phase" value={PHASE_LABELS[phase] ?? phase} />
+                <Field
+                  label="Phase (current)"
+                  value={PHASE_LABELS[phase] ?? phase}
+                />
                 <Field
                   label="Cycle"
-                  value={group.currentCycle ? `${group.currentCycle} / ${group.memberCount}` : "—"}
+                  value={
+                    group.currentCycle
+                      ? `${group.currentCycle} / ${group.memberCount}${
+                          group.currentCycle >= group.memberCount
+                            ? " · closed"
+                            : ""
+                        }`
+                      : `Not started (0 / ${group.memberCount})`
+                  }
                 />
+                {(() => {
+                  const next = (group.currentCycle ?? 0) + 1;
+                  if (next > group.memberCount) return null;
+                  const halfway = Math.floor(group.memberCount / 2);
+                  const nextPhase =
+                    next === group.memberCount
+                      ? "Terminal"
+                      : next > halfway
+                        ? "Distribution (Phase 2)"
+                        : "Collateral (Phase 1)";
+                  return (
+                    <Field
+                      label="Next cycle"
+                      value={`${next} — ${nextPhase}`}
+                    />
+                  );
+                })()}
               </>
             )}
             <Field label="Created" value={fmtDate(group.createdAt)} />

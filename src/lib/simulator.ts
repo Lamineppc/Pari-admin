@@ -16,8 +16,10 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   serverTimestamp,
   updateDoc,
+  where,
   writeBatch,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
@@ -64,6 +66,7 @@ export type SimulatorRunResult = {
   secondHalfPayouts: number;
   leftover?: { adminShare: number; platformShare: number };
   markedCompleted: boolean;
+  escalationFlagged?: "admin_default" | "manager_default" | "both_default" | null;
 };
 
 export type RunNextCycleOptions = {
@@ -74,6 +77,87 @@ export type RunNextCycleOptions = {
 };
 
 const PLATFORM_WALLET_ID = "platform:pari";
+
+/**
+ * TS port of FirestoreService.flagAdminEscalationIfNeeded in the mobile
+ * repo. Runs after every simulator cycle so the escalation loop closes
+ * on the panel — no more "open the group on the emulator to trigger it".
+ * Idempotent: skips if the group already carries a flag or if the group
+ * isn't past Phase 1 yet.
+ *
+ * Returns the flag that was written (or null if nothing was written).
+ */
+export async function runEscalationDetector(
+  groupId: string,
+): Promise<"admin_default" | "manager_default" | "both_default" | null> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) return null;
+  const g = groupSnap.data();
+  if (g.type !== "secured") return null;
+  if (g.adminEscalationFlag) return null;
+  const currentCycle = Number(g.currentCycle ?? 0);
+  const memberCount = Number(g.memberCount ?? 1);
+  if (currentCycle * 2 <= memberCount) return null; // still Phase 1
+  const halfway = Math.floor(memberCount / 2);
+  if (halfway <= 0) return null;
+  const adminUid = (g.createdBy as string | undefined) ?? "";
+  if (!adminUid) return null;
+
+  const managersSnap = await getDocs(
+    query(
+      collection(firestore, "groups", groupId, "members"),
+      where("role", "==", "manager"),
+    ),
+  );
+  const managerUid = managersSnap.empty ? null : managersSnap.docs[0].id;
+
+  async function phase1PaidCount(uid: string): Promise<number> {
+    const snap = await getDocs(
+      query(
+        collection(firestore, "groups", groupId, "payments"),
+        where("userId", "==", uid),
+      ),
+    );
+    const paidCycles = new Set<number>();
+    for (const d of snap.docs) {
+      const data = d.data();
+      if ((data.type as string | undefined) !== "contribution") continue;
+      if (data.status === "voided") continue;
+      const cn = Number(data.cycleNumber ?? 0);
+      if (cn >= 1 && cn <= halfway) paidCycles.add(cn);
+    }
+    return paidCycles.size;
+  }
+
+  const adminPaid = await phase1PaidCount(adminUid);
+  const adminDefaulted = adminPaid < halfway;
+  let managerDefaulted = false;
+  if (managerUid && managerUid !== adminUid) {
+    const managerPaid = await phase1PaidCount(managerUid);
+    managerDefaulted = managerPaid < halfway;
+  }
+  if (!adminDefaulted && !managerDefaulted) return null;
+
+  const flag =
+    adminDefaulted && managerDefaulted
+      ? "both_default"
+      : adminDefaulted
+        ? "admin_default"
+        : "manager_default";
+  const reason =
+    adminDefaulted && managerDefaulted
+      ? "Both the primary admin and the manager missed Phase 1 contributions."
+      : adminDefaulted
+        ? "Primary admin missed at least one Phase 1 contribution."
+        : "Designated manager missed at least one Phase 1 contribution.";
+
+  await updateDoc(doc(firestore, "groups", groupId), {
+    adminEscalationFlag: flag,
+    adminEscalationFlaggedAt: serverTimestamp(),
+    adminEscalationReason: reason,
+  });
+  return flag;
+}
 
 function toMember(snap: QueryDocumentSnapshot): SimulatorMember {
   const d = snap.data();
@@ -414,6 +498,12 @@ export async function runNextCycle(
     ...(markedCompleted ? { status: "completed" } : {}),
   });
 
+  // Auto-run the escalation detector after every cycle. It no-ops for Phase 1
+  // cycles and for groups whose flag is already set, so the cost is one
+  // group-doc read most of the time. Closes the flag loop on the panel
+  // without needing the mobile app to open the group.
+  const escalationFlagged = await runEscalationDetector(group.id).catch(() => null);
+
   return {
     cycleRan: nextCycle,
     phase,
@@ -423,5 +513,6 @@ export async function runNextCycle(
     secondHalfPayouts,
     leftover,
     markedCompleted,
+    escalationFlagged,
   };
 }
