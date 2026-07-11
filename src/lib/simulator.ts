@@ -41,6 +41,7 @@ export type SimulatorMember = {
   role: string;
   kicked: boolean;
   payoutCycle: number | null;
+  observer: boolean;
 };
 
 export type SimulatorPreview = {
@@ -83,6 +84,7 @@ function toMember(snap: QueryDocumentSnapshot): SimulatorMember {
     role: (d.role as string | undefined) ?? "member",
     kicked: Boolean(d.kicked ?? false),
     payoutCycle: (d.payoutCycle as number | undefined) ?? null,
+    observer: Boolean(d.observer ?? false),
   };
 }
 
@@ -152,7 +154,10 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
     return { ready: false, reason: "Rotation already complete.", nextCycle, phase: "terminal", activeMembers: 0, activeMembersList: [], firstHalfRecipients: [], secondHalfRecipients: [] };
   }
 
-  const active = members.filter((m) => !m.kicked);
+  // Observers (position 999, observer flag) are dropped in from the panel's
+  // "Add me as observer" action so a real user can see the group in the
+  // mobile app without joining the rotation. Simulator ignores them.
+  const active = members.filter((m) => !m.kicked && !m.observer);
   const halfway = halfwayCycle(group);
   const phase: "collateral" | "distribution" | "terminal" =
     nextCycle === group.memberCount
@@ -280,7 +285,9 @@ export async function runNextCycle(
   const preview = await previewNextCycle(groupId);
   if (!preview.ready) throw new Error(preview.reason ?? "Simulator not ready.");
   const { group, members } = await loadContext(groupId);
-  const active = members.filter((m) => !m.kicked && m.position != null);
+  const active = members.filter(
+    (m) => !m.kicked && !m.observer && m.position != null,
+  );
   const skipSet = options.skipMemberIds ?? new Set<string>();
   const contributingMembers = active.filter((m) => !skipSet.has(m.id));
   const skipped = active.length - contributingMembers.length;
