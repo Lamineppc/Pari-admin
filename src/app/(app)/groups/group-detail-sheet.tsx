@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X } from "lucide-react";
+import { Beaker, PauseCircle, PlayCircle, ShieldCheck, ShieldPlus, Ban, X, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -16,6 +16,7 @@ import { EscalationBadge } from "@/components/escalation-badge";
 import {
   cancelAndRefundGroup,
   clearAdminEscalation,
+  isMockMoneyGroup,
   securedPhase,
   setGroupStatus,
   subscribeLedger,
@@ -26,6 +27,11 @@ import {
   type LedgerKind,
 } from "@/lib/groups";
 import { Badge } from "@/components/ui/badge";
+import {
+  groupPotId,
+  mockPaymentProvider,
+  type Wallet,
+} from "@/lib/money/mock/mock-payment-provider";
 
 const PHASE_LABELS: Record<string, string> = {
   notStarted: "Not started",
@@ -57,6 +63,7 @@ export function GroupDetailSheet({
     "promote" | "status" | "clear" | "caretaker" | "cancel" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
+  const [pot, setPot] = useState<Wallet | null>(null);
 
   useEffect(() => {
     if (!group) {
@@ -67,6 +74,15 @@ export function GroupDetailSheet({
     return unsub;
   }, [group?.id]);
 
+  useEffect(() => {
+    if (!group || !isMockMoneyGroup(group)) {
+      setPot(null);
+      return;
+    }
+    const unsub = mockPaymentProvider.subscribeWallet(groupPotId(group.id), setPot);
+    return unsub;
+  }, [group?.id, group ? isMockMoneyGroup(group) : false]);
+
   if (!group) return null;
 
   const isActive = group.status === "active";
@@ -75,6 +91,7 @@ export function GroupDetailSheet({
   const isCaretaker = group.caretakerBy !== null;
   const showCaretakerAction = flag === "admin_default" || flag === "both_default";
   const showCancelAction = flag !== null;
+  const isMock = isMockMoneyGroup(group);
 
   async function run(
     kind: "promote" | "status" | "clear" | "caretaker" | "cancel",
@@ -105,11 +122,23 @@ export function GroupDetailSheet({
                 <ShieldPlus className="h-3 w-3" /> Caretaker admin
               </span>
             )}
+            {isMock && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200">
+                <Beaker className="h-3 w-3" /> Simulation
+              </span>
+            )}
           </SheetTitle>
           <SheetDescription>
             {group.type === "secured" ? "Secured tontine" : "Traditional tontine"} — {group.description || "no description"}
           </SheetDescription>
         </SheetHeader>
+
+        {isMock && (
+          <div className="mx-4 rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900 dark:border-purple-900 dark:bg-purple-950/40 dark:text-purple-200">
+            <span className="font-semibold">Simulation — no real money.</span> All
+            balances are mock. See docs/mock_money.md for details.
+          </div>
+        )}
 
         <div className="flex flex-col gap-4 px-4 pb-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -222,6 +251,26 @@ export function GroupDetailSheet({
               {isActive ? "Deactivate group" : "Reactivate group"}
             </Button>
           </div>
+
+          {isMock && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Mock pot
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    <WalletIcon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Balance</span>
+                  </div>
+                  <div className="tabular-nums text-lg font-semibold">
+                    {pot ? `${pot.currency} ${pot.balance.toLocaleString()}` : "…"}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           <Separator />
 

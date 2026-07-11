@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ShieldOff, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ShieldOff, ShieldAlert, ShieldCheck, Beaker, Wallet as WalletIcon } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -11,11 +11,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { setUserBan, type BanType, type PlatformUser } from "@/lib/users";
+import {
+  mockPaymentProvider,
+  userWalletId,
+  type Wallet,
+} from "@/lib/money/mock/mock-payment-provider";
 
 export function UserDetailSheet({
   user,
@@ -27,11 +33,26 @@ export function UserDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState<BanType | "restore" | null>(null);
+  const [busy, setBusy] = useState<BanType | "restore" | "topup" | null>(null);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState("50000");
 
   useEffect(() => {
     setReason("");
+    setTopUpAmount("50000");
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.isTestAccount) {
+      setWallet(null);
+      return;
+    }
+    const unsub = mockPaymentProvider.subscribeWallet(
+      userWalletId(user.uid),
+      setWallet,
+    );
+    return unsub;
+  }, [user?.uid, user?.isTestAccount]);
 
   if (!user) return null;
   const isSelf = user.uid === currentUid;
@@ -59,15 +80,42 @@ export function UserDetailSheet({
     }
   }
 
+  async function applyTopUp() {
+    const amount = Number(topUpAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a positive amount.");
+      return;
+    }
+    setBusy("topup");
+    try {
+      await mockPaymentProvider.topUp({
+        walletId: userWalletId(user!.uid),
+        amount,
+      });
+      toast.success(`Topped up ${amount.toLocaleString()} CFA.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <Sheet open={!!user} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
+          <SheetTitle className="flex flex-wrap items-center gap-2">
             {user.name || "(no name)"}
             {isBanned && (
               <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
                 {user.banType === "hard" ? "Hard ban" : "Soft ban"}
+              </Badge>
+            )}
+            {user.isTestAccount && (
+              <Badge variant="outline" className="border-purple-200 bg-purple-50 text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200">
+                <Beaker className="mr-1 h-3 w-3" />
+                Test account
               </Badge>
             )}
           </SheetTitle>
@@ -140,6 +188,50 @@ export function UserDetailSheet({
               </Button>
             )}
           </div>
+
+          {user.isTestAccount && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Mock wallet
+                  </div>
+                  <Badge variant="outline" className="border-purple-200 bg-purple-50 text-[10px] text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200">
+                    simulation only
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    <WalletIcon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Balance</span>
+                  </div>
+                  <div className="tabular-nums text-lg font-semibold">
+                    {wallet
+                      ? `${wallet.currency} ${wallet.balance.toLocaleString()}`
+                      : "…"}
+                  </div>
+                </div>
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value={topUpAmount}
+                    onChange={(e) => setTopUpAmount(e.target.value)}
+                    placeholder="Amount to add"
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={busy !== null}
+                    onClick={applyTopUp}
+                  >
+                    Top up
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </SheetContent>
     </Sheet>
