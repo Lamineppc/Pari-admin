@@ -263,7 +263,7 @@ export function GroupDetailSheet({
 
   return (
     <Sheet open={!!group} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="flex flex-wrap items-center gap-2">
             {group.name}

@@ -62,7 +62,7 @@ export function StoreDetailSheet({
 
   return (
     <Sheet open={!!store} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             {store.storeName || "(no name)"}
