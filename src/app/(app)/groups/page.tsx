@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { UsersRound, Search, ShieldPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -26,6 +27,7 @@ export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     const unsub = subscribeGroups(setGroups, (e) => {
@@ -34,6 +36,12 @@ export default function GroupsPage() {
     });
     return unsub;
   }, []);
+
+  // Deep-link support: global search sends users here with ?selected=<id>.
+  useEffect(() => {
+    const sel = searchParams.get("selected");
+    if (sel) setSelectedId(sel);
+  }, [searchParams]);
 
   const filtered = useMemo(() => {
     if (!groups) return null;

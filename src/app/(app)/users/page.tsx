@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Users, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -23,6 +24,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     const unsub = subscribeUsers(setUsers, (e) => {
@@ -31,6 +33,12 @@ export default function UsersPage() {
     });
     return unsub;
   }, []);
+
+  // Deep-link support: global search sends users here with ?selected=<uid>.
+  useEffect(() => {
+    const sel = searchParams.get("selected");
+    if (sel) setSelectedId(sel);
+  }, [searchParams]);
 
   const filtered = useMemo(() => {
     if (!users) return null;

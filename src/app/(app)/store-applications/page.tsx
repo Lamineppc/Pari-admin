@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Store, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -43,6 +44,7 @@ export default function StoreApplicationsPage() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("pending");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     const unsub = subscribeStores(setStores, (e) => {
@@ -51,6 +53,12 @@ export default function StoreApplicationsPage() {
     });
     return unsub;
   }, []);
+
+  // Deep-link support for global search.
+  useEffect(() => {
+    const sel = searchParams.get("selected");
+    if (sel) setSelectedId(sel);
+  }, [searchParams]);
 
   const counts = useMemo(() => {
     if (!stores) return null;
