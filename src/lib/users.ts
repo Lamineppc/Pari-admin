@@ -1,10 +1,12 @@
 import {
   addDoc,
   collection,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   doc,
   type QueryDocumentSnapshot,
@@ -61,6 +63,31 @@ export function subscribeUsers(cb: (users: PlatformUser[]) => void, onError?: (e
 // Silently writes a notification to the target user's inbox so they see why
 // their access changed. Notification writes are best-effort — a rule
 // mismatch there shouldn't block the ban itself.
+/**
+ * Recreates the current user's Firestore profile doc if it's missing.
+ * The mobile app's login flow rejects sign-in when the profile doc is
+ * absent (see lib/screens/auth/login_screen.dart) — usually a symptom of
+ * a Firestore wipe leaving the Firebase Auth account dangling. Self-
+ * healing on the admin panel keeps this from blocking access again.
+ *
+ * Only creates the doc; if one already exists, leaves it untouched so we
+ * don't blow away a real profile with a minimal stub. Returns true if a
+ * heal actually happened.
+ */
+export async function healMyProfileIfMissing(): Promise<boolean> {
+  const me = firebaseAuth.currentUser;
+  if (!me) return false;
+  const ref = doc(firestore, "users", me.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return false;
+  await setDoc(ref, {
+    uid: me.uid,
+    name: me.displayName ?? me.email?.split("@")[0] ?? "",
+    email: (me.email ?? "").toLowerCase(),
+  });
+  return true;
+}
+
 // Super-admin-only: flip a user between real and simulation-only. Firestore
 // rules gate the field so no other caller succeeds. Changing the flag does
 // not touch existing memberships — the membership-write rule only checks
