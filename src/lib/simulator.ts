@@ -442,11 +442,11 @@ function stagePaymentAndLedger(
     paymentType === "contribution"
       ? `${userId}_c${cycleNumber}`
       : `sim_payout_${userId}_c${cycleNumber}_${ledgerKind}${
-          note === "Second half" ? "_h2" : ""
+          note?.startsWith("Second half") ? "_h2" : ""
         }`;
   const paymentRef = doc(firestore, "groups", group.id, "payments", paymentId);
   const ledgerId = `${ledgerKind}_${userId}_c${cycleNumber}${
-    note === "Second half" ? "_h2" : ""
+    note?.startsWith("Second half") ? "_h2" : ""
   }`;
   const ledgerRef = doc(firestore, "groups", group.id, "ledger", ledgerId);
 
