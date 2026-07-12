@@ -627,15 +627,28 @@ export async function runNextCycle(
     let penaltyToPlatform = 0;
     const markedCompleted = phase === "terminal";
     if (phase === "terminal") {
+      // Effective missed counters include this Terminal cycle's own skip
+      // — the on-disk counter is only bumped after the transaction runs,
+      // so we need to fold in the current skip inline to compute the
+      // correct proportional payout for someone who defaults on Terminal.
+      const currentCycleIsPhase1 = nextCycle <= halfway;
+      const effectiveMissed = (m: SimulatorMember): { p1: number; p2: number } => {
+        const skippedNow = skipSet.has(m.id);
+        return {
+          p1: m.missedCyclesPhase1 + (skippedNow && currentCycleIsPhase1 ? 1 : 0),
+          p2: m.missedCyclesPhase2 + (skippedNow && !currentCycleIsPhase1 ? 1 : 0),
+        };
+      };
       for (const m of sortByPayoutOrder(active)) {
-        const isDf = isDefaulter(m);
+        const eff = effectiveMissed(m);
+        const isDf = eff.p1 > 0 || eff.p2 > 0;
         const alreadyGotFirstHalf = m.payoutCycle != null;
 
         // First-half amount
         let firstHalfAmt = 0;
         if (!alreadyGotFirstHalf) {
           if (isDf) {
-            const phase1Paid = Math.max(0, halfway - m.missedCyclesPhase1);
+            const phase1Paid = Math.max(0, halfway - eff.p1);
             firstHalfAmt = halfway > 0
               ? Math.floor((phase1Paid / halfway) * halfPayout)
               : halfPayout;
@@ -647,49 +660,38 @@ export async function runNextCycle(
         // Second-half amount
         let secondHalfAmt: number;
         if (isDf) {
-          const phase2Paid = Math.max(
-            0,
-            phase2CyclesExpected - m.missedCyclesPhase2,
-          );
+          const phase2Paid = Math.max(0, phase2CyclesExpected - eff.p2);
           secondHalfAmt = phase2Paid * group.amount;
         } else {
           secondHalfAmt = halfPayout;
         }
 
-        // Penalty
-        const missed = m.missedCyclesPhase1 + m.missedCyclesPhase2;
-        const rawPenalty = missed * penaltyPerMissedCycle;
-        const grossPayout = firstHalfAmt + secondHalfAmt;
-        const penalty = Math.min(rawPenalty, grossPayout);
-        const netFirstHalf = firstHalfAmt;
-        let netSecondHalf = secondHalfAmt - penalty;
-        if (netSecondHalf < 0) {
-          // Should not happen given the min above, but guard anyway.
-          netSecondHalf = 0;
-        }
-
-        // Pay first half (delayed to Terminal for anyone who hadn't been
-        // paid earlier — includes Phase-1 defaulters who got reordered to
-        // the tail).
-        if (netFirstHalf > 0) {
-          payFromPot(m, netFirstHalf, "First half");
+        // Pay first half in full (proportional amount for a defaulter is
+        // the amount they're entitled to; the ledger records what actually
+        // moved from the pot into the member's wallet).
+        if (firstHalfAmt > 0) {
+          payFromPot(
+            m,
+            firstHalfAmt,
+            isDf && firstHalfAmt < halfPayout ? "First half (partial)" : "First half",
+          );
           tx.update(doc(firestore, "groups", group.id, "members", m.id), {
             payoutCycle: nextCycle,
           });
           firstHalfPayouts += 1;
         }
 
-        // Pay second half (partial for defaulters).
-        if (netSecondHalf > 0) {
+        // Pay second half in full.
+        if (secondHalfAmt > 0) {
           payFromPot(
             m,
-            netSecondHalf,
-            isDf ? "Second half (partial)" : "Second half",
+            secondHalfAmt,
+            isDf && secondHalfAmt < halfPayout ? "Second half (partial)" : "Second half",
           );
           secondHalfPayouts += 1;
         } else if (isDf) {
-          // Zero-amount second-half row keeps the CSV honest even when the
-          // defaulter is entitled to nothing after penalties.
+          // Zero-amount second-half row keeps the CSV honest even when
+          // the defaulter is entitled to nothing (fully missed Phase 2).
           stagePaymentAndLedger(tx, group, {
             userId: m.id,
             userName: m.name,
@@ -703,15 +705,22 @@ export async function runNextCycle(
           secondHalfPayouts += 1;
         }
 
-        // Sweep penalty to the platform wallet. Recorded as a payout with
-        // ledgerKind 'penalty' so the money-flow rollups include it.
+        // Penalty is drawn from the defaulter's own wallet (funded by the
+        // Terminal payouts we just credited) and swept to the platform.
+        // This keeps the pot's contributions/payouts balanced and lets the
+        // money-flow report compute a correct net: the defaulter's
+        // receivedPayout reflects the full pot outflow and paidPenalty
+        // reflects only what left their wallet toward the platform — no
+        // double-counting.
+        const missed = eff.p1 + eff.p2;
+        const rawPenalty = missed * penaltyPerMissedCycle;
+        const grossPayout = firstHalfAmt + secondHalfAmt;
+        const penalty = Math.min(rawPenalty, grossPayout);
         if (penalty > 0) {
-          const pot = wallets.get(groupPotId(group.id))!;
-          if (pot.balance >= penalty) {
-            wallets.set(groupPotId(group.id), {
-              ...pot,
-              balance: pot.balance - penalty,
-            });
+          const walletId = userWalletId(m.id);
+          const w = wallets.get(walletId)!;
+          if (w.balance >= penalty) {
+            wallets.set(walletId, { ...w, balance: w.balance - penalty });
             const platform = wallets.get(PLATFORM_WALLET_ID)!;
             wallets.set(PLATFORM_WALLET_ID, {
               ...platform,
@@ -724,8 +733,7 @@ export async function runNextCycle(
               amount: penalty,
               cycleNumber: nextCycle,
               ledgerKind: "penalty",
-              // Uses `payout` on the /payments doc because the payment
-              // schema only has contribution/payout kinds today; the
+              // /payments schema only knows contribution/payout — the
               // ledger kind carries the "penalty" semantic for rollups.
               paymentType: "payout",
               note: `Penalty × ${missed} missed`,
@@ -775,7 +783,7 @@ export async function runNextCycle(
     //   - and — if this is their FIRST miss — has their payoutOrder bumped
     //     to 1000+position so the payout queue treats them as tail-of-line
     //     immediately from the next cycle onward.
-    if (phase !== "terminal" && skipSet.size > 0) {
+    if (skipSet.size > 0) {
       const phase1Cycle = nextCycle <= halfway;
       for (const m of active) {
         if (!skipSet.has(m.id)) continue;
