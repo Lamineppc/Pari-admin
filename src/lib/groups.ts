@@ -177,6 +177,33 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
   const managerUid = managers[0].id;
   if (managerUid === formerAdminUid) throw new Error("Manager is already the primary admin.");
 
+  // Rename the promoted manager with an "(AdminPromo)" suffix so the
+  // money-flow CSV, Users page, and mobile roster make the swap
+  // obvious. Same convention demoteDefaultedAdmin uses.
+  const managerData = managers[0].data();
+  const managerName = (managerData.name as string | undefined) ?? "Manager";
+  const renamed = managerName.includes("(AdminPromo)")
+    ? managerName
+    : `${managerName} (AdminPromo)`;
+
+  // Auto-promote the next non-defaulted, non-kicked member (by position)
+  // to manager so the group keeps a designated manager.
+  const nextManagerDoc = membersSnap.docs
+    .filter((d) => {
+      const uid = d.id;
+      if (uid === formerAdminUid || uid === managerUid) return false;
+      const data = d.data();
+      if (data.kicked) return false;
+      const missed1 = Number(data.missedCyclesPhase1 ?? 0);
+      const missed2 = Number(data.missedCyclesPhase2 ?? 0);
+      return missed1 === 0 && missed2 === 0;
+    })
+    .sort(
+      (a, b) =>
+        Number(a.data().position ?? 999) - Number(b.data().position ?? 999),
+    )[0];
+  const newManagerUid = nextManagerDoc?.id ?? null;
+
   const batch = writeBatch(firestore);
   batch.update(groupRef, {
     createdBy: managerUid,
@@ -184,8 +211,17 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
     adminEscalationFlaggedAt: deleteField(),
     adminEscalationReason: deleteField(),
   });
-  batch.update(doc(membersCol, managerUid), { role: "admin" });
+  batch.update(doc(membersCol, managerUid), {
+    role: "admin",
+    name: renamed,
+  });
+  batch.update(doc(firestore, "users", managerUid), {
+    name: renamed,
+  });
   batch.update(doc(membersCol, formerAdminUid), { role: "member" });
+  if (newManagerUid) {
+    batch.update(doc(membersCol, newManagerUid), { role: "manager" });
+  }
   await batch.commit();
   await writeAudit({
     action: "promote_manager_to_admin",
