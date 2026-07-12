@@ -19,6 +19,7 @@ import {
   cancelAndRefundGroup,
   clearAdminEscalation,
   isMockMoneyGroup,
+  demoteDefaultedAdmin,
   kickDefaultedAdmin,
   securedPhase,
   setGroupStatus,
@@ -74,7 +75,7 @@ export function GroupDetailSheet({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | null
+    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | "demote" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
@@ -145,6 +146,28 @@ export function GroupDetailSheet({
         .join(", ");
       toast.success(
         `${r.caretaker ? "Super admin took over" : "Manager promoted"}. Refunded: ${refundLines || "nothing"}.`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function demoteDefaulted() {
+    if (!group) return;
+    if (
+      !window.confirm(
+        "Demote the defaulted admin (stays in the group as a regular member, no refund), promote the manager to admin with an (AdminPromo) suffix, and auto-promote the next non-defaulted member to manager. Continue?",
+      )
+    )
+      return;
+    setBusy("demote");
+    try {
+      const r = await demoteDefaultedAdmin(group.id);
+      toast.success(
+        `${r.demotedUid.slice(0, 12)}… demoted → ${r.newAdminUid.slice(0, 12)}… (AdminPromo). New manager: ${r.newManagerUid ? r.newManagerUid.slice(0, 12) + "…" : "unassigned"}.`,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -411,6 +434,15 @@ export function GroupDetailSheet({
                 {flag === "both_default"
                   ? "Kick admin + manager, refund, take over"
                   : "Kick defaulted admin, refund, promote manager"}
+              </Button>
+            )}
+            {flag === "admin_default" && isMock && (
+              <Button
+                variant="outline"
+                disabled={busy !== null}
+                onClick={demoteDefaulted}
+              >
+                <UserX /> Demote admin (keep in group, promote manager to AdminPromo)
               </Button>
             )}
             {showCaretakerAction && !isCaretaker && (

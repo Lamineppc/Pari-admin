@@ -28,6 +28,7 @@ export function NewMockGroupDialog({
   const [memberCount, setMemberCount] = useState("4");
   const [amount, setAmount] = useState("20000");
   const [startingBalance, setStartingBalance] = useState("");
+  const [penaltyPerMissedCycle, setPenaltyPerMissedCycle] = useState("5000");
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -38,6 +39,9 @@ export function NewMockGroupDialog({
         memberCount: Number(memberCount),
         amount: Number(amount),
         startingBalance: startingBalance ? Number(startingBalance) : undefined,
+        penaltyPerMissedCycle: penaltyPerMissedCycle
+          ? Number(penaltyPerMissedCycle)
+          : 0,
       });
       toast.success(
         `Created "${name}" with ${result.memberUids.length} test members, each seeded with ${result.startingBalance.toLocaleString()} CFA.`,
@@ -123,6 +127,25 @@ export function NewMockGroupDialog({
               value={startingBalance}
               onChange={(e) => setStartingBalance(e.target.value)}
             />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="mock-penalty">
+              Penalty per missed cycle (CFA)
+            </Label>
+            <Input
+              id="mock-penalty"
+              type="number"
+              min="0"
+              step="500"
+              placeholder="0 = no penalty"
+              value={penaltyPerMissedCycle}
+              onChange={(e) => setPenaltyPerMissedCycle(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Deducted from a defaulter&apos;s Terminal payout, swept to the
+              Pari platform wallet. Applied when using &quot;Demote admin&quot; or on any
+              member who missed contributions.
+            </p>
           </div>
           <DialogFooter>
             <Button

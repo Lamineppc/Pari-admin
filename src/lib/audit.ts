@@ -31,6 +31,7 @@ import { firebaseAuth, firestore } from "./firebase";
 
 export type AuditAction =
   | "kick_defaulted_admin"
+  | "demote_defaulted_admin"
   | "promote_manager_to_admin"
   | "take_over_as_caretaker"
   | "dismiss_escalation"

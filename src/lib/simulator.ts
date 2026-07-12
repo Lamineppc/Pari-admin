@@ -42,10 +42,22 @@ export type SimulatorMember = {
   id: string;
   name: string;
   position: number | null;
+  // payoutOrder is the effective queue slot. Starts equal to position;
+  // when the member defaults on any contribution it bumps to
+  // 1000+position so they queue at the tail of the payout queue while
+  // preserving relative order among defaulters (position 3 → 1003 still
+  // sorts before position 5 → 1005).
+  payoutOrder: number | null;
   role: string;
   kicked: boolean;
   payoutCycle: number | null;
   observer: boolean;
+  // Cumulative counters incremented every time runNextCycle skips this
+  // member during a contribution collection. Used at Terminal to compute
+  // proportional first-half payout (from Phase 1 completion) and partial
+  // second-half payout (from Phase 2 contributions).
+  missedCyclesPhase1: number;
+  missedCyclesPhase2: number;
 };
 
 export type SimulatorPreview = {
@@ -231,15 +243,31 @@ export async function runEscalationDetector(
 
 function toMember(snap: QueryDocumentSnapshot): SimulatorMember {
   const d = snap.data();
+  const position = (d.position as number | undefined) ?? null;
   return {
     id: snap.id,
     name: (d.name as string | undefined) ?? "Member",
-    position: (d.position as number | undefined) ?? null,
+    position,
+    payoutOrder: (d.payoutOrder as number | undefined) ?? position,
     role: (d.role as string | undefined) ?? "member",
     kicked: Boolean(d.kicked ?? false),
     payoutCycle: (d.payoutCycle as number | undefined) ?? null,
     observer: Boolean(d.observer ?? false),
+    missedCyclesPhase1: Number(d.missedCyclesPhase1 ?? 0),
+    missedCyclesPhase2: Number(d.missedCyclesPhase2 ?? 0),
   };
+}
+
+function sortByPayoutOrder(members: SimulatorMember[]): SimulatorMember[] {
+  return [...members].sort((a, b) => {
+    const av = a.payoutOrder ?? a.position ?? 999;
+    const bv = b.payoutOrder ?? b.position ?? 999;
+    return av - bv;
+  });
+}
+
+function isDefaulter(m: SimulatorMember): boolean {
+  return m.missedCyclesPhase1 > 0 || m.missedCyclesPhase2 > 0;
 }
 
 function phaseForCycle(group: Pick<Group, "type" | "memberCount">, cycle: number): string {
@@ -287,6 +315,7 @@ async function loadContext(groupId: string): Promise<{ group: Group; members: Si
     caretakerBy: (g.caretakerBy as string | undefined) ?? null,
     createdAt: null,
     moneyProvider: (g.moneyProvider as Group["moneyProvider"] | undefined) ?? null,
+    penaltyPerMissedCycle: Number(g.penaltyPerMissedCycle ?? 0),
   };
 
   const membersSnap = await getDocs(collection(firestore, "groups", groupId, "members"));
@@ -339,12 +368,18 @@ export async function previewNextCycle(groupId: string): Promise<SimulatorPrevie
         ? "distribution"
         : "collateral";
 
-  const firstHalfPositions = firstHalfPositionsForCycle(nextCycle, group);
-  const firstHalfRecipients = firstHalfPositions
-    .map((p) => active.find((m) => m.position === p))
+  // Sort by payoutOrder so any defaulters (payoutOrder bumped to 1000+pos)
+  // queue at the tail. The rank-based positions returned by
+  // firstHalfPositionsForCycle map to indices in this sorted list, so a
+  // Phase-1 defaulter at original position 1 gets pushed all the way to
+  // Terminal for their first-half payout.
+  const sortedActive = sortByPayoutOrder(active);
+  const firstHalfRanks = firstHalfPositionsForCycle(nextCycle, group);
+  const firstHalfRecipients = firstHalfRanks
+    .map((rank) => sortedActive[rank - 1])
     .filter((m): m is SimulatorMember => !!m);
 
-  const secondHalfRecipients = phase === "terminal" ? active : [];
+  const secondHalfRecipients = phase === "terminal" ? sortedActive : [];
 
   const membersWithoutPositions = active.filter((m) => m.position == null);
   const activeMembersList = [...active].sort(
@@ -462,10 +497,15 @@ export async function runNextCycle(
   const skipSet = options.skipMemberIds ?? new Set<string>();
   const contributingMembers = active.filter((m) => !skipSet.has(m.id));
   const skipped = active.length - contributingMembers.length;
-  void halfwayCycle; // preserved for readability
   const nextCycle = preview.nextCycle;
   const phase = preview.phase;
+  const halfway = halfwayCycle(group);
   const halfPayout = (group.amount * group.memberCount) / 2;
+  const penaltyPerMissedCycle = Number(group.penaltyPerMissedCycle ?? 0);
+  // Phase-2 cycles a member is expected to contribute to: cycles
+  // halfway+1..memberCount inclusive (includes the current cycle, so at
+  // Terminal every Phase-2 slot has been billed exactly once).
+  const phase2CyclesExpected = group.memberCount - halfway;
 
   const groupRef = doc(firestore, "groups", group.id);
   const potRef = doc(firestore, "mockWallets", groupPotId(group.id));
@@ -527,33 +567,47 @@ export async function runNextCycle(
       });
     }
 
-    // Step 2 — first-half payouts (Distribution + Terminal both).
+    // Helper — deduct amount from pot and credit member wallet. Throws if
+    // the pot can't cover. Emits the payment + ledger entries so the
+    // money-flow report reflects the exact split.
+    const payFromPot = (
+      m: SimulatorMember,
+      amount: number,
+      note: string,
+    ) => {
+      if (amount <= 0) return;
+      const pot = wallets.get(groupPotId(group.id))!;
+      if (pot.balance < amount) {
+        throw new Error(
+          `Pot has ${group.currency} ${pot.balance.toLocaleString()}, needs ${group.currency} ${amount.toLocaleString()} for ${m.name}'s ${note.toLowerCase()}.`,
+        );
+      }
+      wallets.set(groupPotId(group.id), {
+        ...pot,
+        balance: pot.balance - amount,
+      });
+      const walletId = userWalletId(m.id);
+      const w = wallets.get(walletId)!;
+      wallets.set(walletId, { ...w, balance: w.balance + amount });
+      stagePaymentAndLedger(tx, group, {
+        userId: m.id,
+        userName: m.name,
+        position: m.position ?? 0,
+        amount,
+        cycleNumber: nextCycle,
+        ledgerKind: "payout",
+        paymentType: "payout",
+        note,
+      });
+    };
+
+    // Step 2 — first-half payouts during Distribution (Phase 2).
+    // Terminal handles both halves per-member in Step 3 (variable amounts
+    // for defaulters), so we don't run this block on Terminal.
     let firstHalfPayouts = 0;
-    if (phase === "distribution" || phase === "terminal") {
+    if (phase === "distribution") {
       for (const m of preview.firstHalfRecipients) {
-        const pot = wallets.get(groupPotId(group.id))!;
-        if (pot.balance < halfPayout) {
-          throw new Error(
-            `Pot has ${group.currency} ${pot.balance.toLocaleString()}, needs ${group.currency} ${halfPayout.toLocaleString()} for ${m.name}'s first-half payout.`,
-          );
-        }
-        wallets.set(groupPotId(group.id), {
-          ...pot,
-          balance: pot.balance - halfPayout,
-        });
-        const walletId = userWalletId(m.id);
-        const w = wallets.get(walletId)!;
-        wallets.set(walletId, { ...w, balance: w.balance + halfPayout });
-        stagePaymentAndLedger(tx, group, {
-          userId: m.id,
-          userName: m.name,
-          position: m.position ?? 0,
-          amount: halfPayout,
-          cycleNumber: nextCycle,
-          ledgerKind: "payout",
-          paymentType: "payout",
-          note: "First half",
-        });
+        payFromPot(m, halfPayout, "First half");
         tx.update(doc(firestore, "groups", group.id, "members", m.id), {
           payoutCycle: nextCycle,
         });
@@ -561,36 +615,124 @@ export async function runNextCycle(
       }
     }
 
-    // Step 3 — Terminal: second-halves + leftover split.
+    // Step 3 — Terminal payouts, per-member and phase-completion aware.
+    // Healthy members get their full first-half (if not paid earlier) plus
+    // full second-half. Defaulters get proportional first-half based on
+    // Phase 1 completion + partial second-half equal to what they actually
+    // contributed in Phase 2, minus penalty accrued from missed cycles.
+    // Penalty sweeps to the platform wallet. Any residual pot at the end
+    // still splits 50/50 admin ↔ platform per the existing spec.
     let secondHalfPayouts = 0;
     let leftover: SimulatorRunResult["leftover"];
+    let penaltyToPlatform = 0;
     const markedCompleted = phase === "terminal";
     if (phase === "terminal") {
-      for (const m of active) {
-        const pot = wallets.get(groupPotId(group.id))!;
-        if (pot.balance < halfPayout) {
-          throw new Error(
-            `Pot has ${group.currency} ${pot.balance.toLocaleString()}, needs ${group.currency} ${halfPayout.toLocaleString()} for ${m.name}'s second-half payout.`,
-          );
+      for (const m of sortByPayoutOrder(active)) {
+        const isDf = isDefaulter(m);
+        const alreadyGotFirstHalf = m.payoutCycle != null;
+
+        // First-half amount
+        let firstHalfAmt = 0;
+        if (!alreadyGotFirstHalf) {
+          if (isDf) {
+            const phase1Paid = Math.max(0, halfway - m.missedCyclesPhase1);
+            firstHalfAmt = halfway > 0
+              ? Math.floor((phase1Paid / halfway) * halfPayout)
+              : halfPayout;
+          } else {
+            firstHalfAmt = halfPayout;
+          }
         }
-        wallets.set(groupPotId(group.id), {
-          ...pot,
-          balance: pot.balance - halfPayout,
-        });
-        const walletId = userWalletId(m.id);
-        const w = wallets.get(walletId)!;
-        wallets.set(walletId, { ...w, balance: w.balance + halfPayout });
-        stagePaymentAndLedger(tx, group, {
-          userId: m.id,
-          userName: m.name,
-          position: m.position ?? 0,
-          amount: halfPayout,
-          cycleNumber: nextCycle,
-          ledgerKind: "payout",
-          paymentType: "payout",
-          note: "Second half",
-        });
-        secondHalfPayouts += 1;
+
+        // Second-half amount
+        let secondHalfAmt: number;
+        if (isDf) {
+          const phase2Paid = Math.max(
+            0,
+            phase2CyclesExpected - m.missedCyclesPhase2,
+          );
+          secondHalfAmt = phase2Paid * group.amount;
+        } else {
+          secondHalfAmt = halfPayout;
+        }
+
+        // Penalty
+        const missed = m.missedCyclesPhase1 + m.missedCyclesPhase2;
+        const rawPenalty = missed * penaltyPerMissedCycle;
+        const grossPayout = firstHalfAmt + secondHalfAmt;
+        const penalty = Math.min(rawPenalty, grossPayout);
+        const netFirstHalf = firstHalfAmt;
+        let netSecondHalf = secondHalfAmt - penalty;
+        if (netSecondHalf < 0) {
+          // Should not happen given the min above, but guard anyway.
+          netSecondHalf = 0;
+        }
+
+        // Pay first half (delayed to Terminal for anyone who hadn't been
+        // paid earlier — includes Phase-1 defaulters who got reordered to
+        // the tail).
+        if (netFirstHalf > 0) {
+          payFromPot(m, netFirstHalf, "First half");
+          tx.update(doc(firestore, "groups", group.id, "members", m.id), {
+            payoutCycle: nextCycle,
+          });
+          firstHalfPayouts += 1;
+        }
+
+        // Pay second half (partial for defaulters).
+        if (netSecondHalf > 0) {
+          payFromPot(
+            m,
+            netSecondHalf,
+            isDf ? "Second half (partial)" : "Second half",
+          );
+          secondHalfPayouts += 1;
+        } else if (isDf) {
+          // Zero-amount second-half row keeps the CSV honest even when the
+          // defaulter is entitled to nothing after penalties.
+          stagePaymentAndLedger(tx, group, {
+            userId: m.id,
+            userName: m.name,
+            position: m.position ?? 0,
+            amount: 0,
+            cycleNumber: nextCycle,
+            ledgerKind: "payout",
+            paymentType: "payout",
+            note: "Second half (partial)",
+          });
+          secondHalfPayouts += 1;
+        }
+
+        // Sweep penalty to the platform wallet. Recorded as a payout with
+        // ledgerKind 'penalty' so the money-flow rollups include it.
+        if (penalty > 0) {
+          const pot = wallets.get(groupPotId(group.id))!;
+          if (pot.balance >= penalty) {
+            wallets.set(groupPotId(group.id), {
+              ...pot,
+              balance: pot.balance - penalty,
+            });
+            const platform = wallets.get(PLATFORM_WALLET_ID)!;
+            wallets.set(PLATFORM_WALLET_ID, {
+              ...platform,
+              balance: platform.balance + penalty,
+            });
+            stagePaymentAndLedger(tx, group, {
+              userId: m.id,
+              userName: m.name,
+              position: m.position ?? 0,
+              amount: penalty,
+              cycleNumber: nextCycle,
+              ledgerKind: "penalty",
+              // Uses `payout` on the /payments doc because the payment
+              // schema only has contribution/payout kinds today; the
+              // ledger kind carries the "penalty" semantic for rollups.
+              paymentType: "payout",
+              note: `Penalty × ${missed} missed`,
+            });
+            penaltyToPlatform += penalty;
+          }
+        }
       }
 
       const potAfter = wallets.get(groupPotId(group.id))!;
@@ -612,7 +754,7 @@ export async function runNextCycle(
       }
     }
 
-    // ── PERSIST WALLETS + GROUP UPDATE ────────────────────────────────────
+    // ── PERSIST WALLETS + GROUP + MEMBER COUNTERS ─────────────────────────
     for (const [walletId, state] of wallets) {
       const ref =
         walletId === PLATFORM_WALLET_ID
@@ -626,11 +768,34 @@ export async function runNextCycle(
         updatedAt: serverTimestamp(),
       });
     }
+
+    // Track defaults per member. Anyone who was skipped this cycle:
+    //   - increments the missedCyclesPhase1/2 counter (used at Terminal
+    //     for proportional payout math and penalty accrual),
+    //   - and — if this is their FIRST miss — has their payoutOrder bumped
+    //     to 1000+position so the payout queue treats them as tail-of-line
+    //     immediately from the next cycle onward.
+    if (phase !== "terminal" && skipSet.size > 0) {
+      const phase1Cycle = nextCycle <= halfway;
+      for (const m of active) {
+        if (!skipSet.has(m.id)) continue;
+        const memberRef = doc(firestore, "groups", group.id, "members", m.id);
+        const bumpOrder = (m.payoutOrder ?? m.position ?? 0) <= group.memberCount;
+        tx.update(memberRef, {
+          ...(phase1Cycle
+            ? { missedCyclesPhase1: (m.missedCyclesPhase1 ?? 0) + 1 }
+            : { missedCyclesPhase2: (m.missedCyclesPhase2 ?? 0) + 1 }),
+          ...(bumpOrder ? { payoutOrder: 1000 + (m.position ?? 0) } : {}),
+        });
+      }
+    }
+
     tx.update(groupRef, {
       currentCycle: nextCycle,
       positionsLocked: true,
       ...(markedCompleted ? { status: "completed" } : {}),
     });
+    void penaltyToPlatform; // reported via ledger entries per member
 
     return {
       cycleRan: nextCycle,

@@ -37,6 +37,11 @@ export type CreateMockGroupInput = {
    *  `amount × memberCount + amount` (enough to cover the full Secured
    *  rotation plus one late-payment penalty buffer). */
   startingBalance?: number;
+  /** Flat penalty applied per missed contribution cycle when a member
+   *  defaults but isn't kicked (see demoteDefaultedAdmin flow). Deducted
+   *  from the defaulter's Terminal payout and swept to the Pari platform
+   *  wallet. Defaults to 0. */
+  penaltyPerMissedCycle?: number;
 };
 
 export type CreateMockGroupResult = {
@@ -62,6 +67,7 @@ export async function createMockGroup(
   const startingBalance = Number(
     input.startingBalance ?? amount * memberCount + amount,
   );
+  const penaltyPerMissedCycle = Number(input.penaltyPerMissedCycle ?? 0);
 
   if (name.length === 0) throw new Error("Give the group a name.");
   if (memberCount < 2 || memberCount > 20) {
@@ -117,6 +123,7 @@ export async function createMockGroup(
     currentCycle: 0,
     positionsLocked: true,
     penaltyType: "none",
+    penaltyPerMissedCycle,
     moneyProvider: "mock",
   });
 
@@ -131,6 +138,10 @@ export async function createMockGroup(
       email: `${memberUids[i]}@sim.pari`,
       role,
       position: i + 1,
+      // payoutOrder starts equal to position; defaulters get bumped to
+      // memberCount + defaultOrderIndex so they queue at the tail (kept
+      // in original relative order among themselves).
+      payoutOrder: i + 1,
       joinedAt: serverTimestamp(),
     });
   }

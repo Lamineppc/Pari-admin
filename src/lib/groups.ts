@@ -54,6 +54,11 @@ export type Group = {
   // — treated as 'orange_money' at read time. See docs/mock_money.md in
   // the mobile repo for the isolation model.
   moneyProvider: "mock" | "orange_money" | null;
+  // Flat penalty (in group currency) applied per missed contribution when
+  // a member defaults but stays in the group (see demoteDefaultedAdmin).
+  // Deducted from the defaulter's Terminal payout and swept to the Pari
+  // platform wallet. Defaults to 0 for legacy groups.
+  penaltyPerMissedCycle: number;
 };
 
 function toGroup(snap: QueryDocumentSnapshot): Group {
@@ -80,6 +85,7 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
     moneyProvider:
       (d.moneyProvider as "mock" | "orange_money" | undefined) ?? null,
+    penaltyPerMissedCycle: Number(d.penaltyPerMissedCycle ?? 0),
   };
 }
 
@@ -678,6 +684,132 @@ export async function kickDefaultedAdmin(groupId: string): Promise<{
     newAdminUid,
     caretaker: takeoverAsCaretaker,
   };
+}
+
+/** Alternative to kickDefaultedAdmin — instead of removing the defaulted
+ *  admin, demote them to member, promote the manager to admin (renamed
+ *  with an "(AdminPromo)" suffix so the money-flow CSV makes the swap
+ *  obvious), auto-promote the next non-defaulted member to manager, and
+ *  bump the demoted admin's payoutOrder to the tail of the payout queue.
+ *  Their reduced Terminal payout falls out of the simulator's proportional
+ *  math — no refund happens here. `both_default` still routes to the
+ *  caretaker path via kickDefaultedAdmin because losing both leaders
+ *  needs manual super-admin intervention. */
+export async function demoteDefaultedAdmin(groupId: string): Promise<{
+  demotedUid: string;
+  newAdminUid: string;
+  newManagerUid: string | null;
+}> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  const flag = g.adminEscalationFlag as AdminEscalationFlag | undefined;
+  if (flag !== "admin_default") {
+    throw new Error(
+      "This action only handles admin_default flags. For both_default, use Kick + refund (super-admin caretaker takeover).",
+    );
+  }
+  if ((g.moneyProvider as string | undefined) !== "mock") {
+    throw new Error(
+      "Demote on real-money groups needs the Cloud Functions money layer (PR 6b–d).",
+    );
+  }
+  const adminUid = (g.createdBy as string | undefined) ?? "";
+  if (!adminUid) throw new Error("Group has no admin.");
+
+  const membersSnap = await getDocs(
+    collection(firestore, "groups", groupId, "members"),
+  );
+  const managerDoc = membersSnap.docs.find(
+    (d) => (d.data().role as string | undefined) === "manager",
+  );
+  if (!managerDoc) {
+    throw new Error(
+      "No manager designated — Secured groups require a manager. Assign one before demoting.",
+    );
+  }
+  const managerUid = managerDoc.id;
+  const managerData = managerDoc.data();
+  const managerName = (managerData.name as string | undefined) ?? "Manager";
+
+  // Next non-defaulted, non-admin, non-manager member becomes the new
+  // manager. Sorted by position for determinism.
+  const nextManagerDoc = membersSnap.docs
+    .filter((d) => {
+      const uid = d.id;
+      if (uid === adminUid || uid === managerUid) return false;
+      const data = d.data();
+      if (data.kicked) return false;
+      const missed1 = Number(data.missedCyclesPhase1 ?? 0);
+      const missed2 = Number(data.missedCyclesPhase2 ?? 0);
+      return missed1 === 0 && missed2 === 0;
+    })
+    .sort(
+      (a, b) =>
+        Number(a.data().position ?? 999) - Number(b.data().position ?? 999),
+    )[0];
+  const newManagerUid = nextManagerDoc?.id ?? null;
+
+  const adminMemberDoc = membersSnap.docs.find((d) => d.id === adminUid);
+  const adminPosition = Number(adminMemberDoc?.data().position ?? 0);
+
+  const groupRef = doc(firestore, "groups", groupId);
+  const membersCol = collection(firestore, "groups", groupId, "members");
+
+  await runTransaction(firestore, async (tx) => {
+    // Demote defaulted admin — role changes to member, payoutOrder goes
+    // to the tail so their remaining payouts land at Terminal only.
+    tx.update(doc(membersCol, adminUid), {
+      role: "member",
+      payoutOrder: 1000 + adminPosition,
+      demotedAt: serverTimestamp(),
+      demotedReason: "Defaulted on Phase 1 contributions (admin_default)",
+    });
+
+    // Promote manager to admin. Also rename with the "(AdminPromo)"
+    // suffix on both the group's member doc AND their top-level users/{uid}
+    // profile so the money-flow CSV and every roster view surfaces the swap.
+    const suffix = " (AdminPromo)";
+    const renamed = managerName.includes("(AdminPromo)")
+      ? managerName
+      : `${managerName}${suffix}`;
+    tx.update(doc(membersCol, managerUid), {
+      role: "admin",
+      name: renamed,
+    });
+    tx.update(doc(firestore, "users", managerUid), {
+      name: renamed,
+    });
+
+    // Auto-promote next member to manager (best-effort — leaves the slot
+    // empty if there are no eligible candidates, which the super admin can
+    // fill from the panel).
+    if (newManagerUid) {
+      tx.update(doc(membersCol, newManagerUid), { role: "manager" });
+    }
+
+    tx.update(groupRef, {
+      createdBy: managerUid,
+      adminEscalationFlag: deleteField(),
+      adminEscalationFlaggedAt: deleteField(),
+      adminEscalationReason: deleteField(),
+    });
+  });
+
+  await writeAudit({
+    action: "demote_defaulted_admin",
+    targetType: "group",
+    targetId: groupId,
+    test: true,
+    before: { flag, createdBy: adminUid, managerUid },
+    after: {
+      demotedUid: adminUid,
+      newAdminUid: managerUid,
+      newManagerUid,
+    },
+  });
+
+  return { demotedUid: adminUid, newAdminUid: managerUid, newManagerUid };
 }
 
 // PR 5c stub — Cancel the group and refund every member. Full implementation
