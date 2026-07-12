@@ -414,6 +414,17 @@ type WalletState = { balance: number; currency: string };
 /** Stages a payment + ledger write on the given transaction. Assumes the
  *  wallet updates are handled separately (we bundle those in bulk after
  *  computing every balance delta). */
+// Slot identifies which logical write this is within a cycle+kind so the
+// ledger doc ID is unambiguous. Every call site must set it explicitly —
+// previous versions of this function tried to infer the slot from the
+// human-readable `note` field, which silently collided when we added
+// "(partial)" suffixes for defaulters.
+type LedgerSlot =
+  | "contribution"
+  | "first_half"
+  | "second_half"
+  | "penalty";
+
 function stagePaymentAndLedger(
   tx: Transaction,
   group: Group,
@@ -425,6 +436,7 @@ function stagePaymentAndLedger(
     cycleNumber: number;
     ledgerKind: LedgerKind;
     paymentType: "contribution" | "payout";
+    slot: LedgerSlot;
     note?: string;
   },
 ) {
@@ -436,18 +448,15 @@ function stagePaymentAndLedger(
     cycleNumber,
     ledgerKind,
     paymentType,
+    slot,
     note,
   } = args;
   const paymentId =
     paymentType === "contribution"
       ? `${userId}_c${cycleNumber}`
-      : `sim_payout_${userId}_c${cycleNumber}_${ledgerKind}${
-          note?.startsWith("Second half") ? "_h2" : ""
-        }`;
+      : `sim_payout_${userId}_c${cycleNumber}_${slot}`;
   const paymentRef = doc(firestore, "groups", group.id, "payments", paymentId);
-  const ledgerId = `${ledgerKind}_${userId}_c${cycleNumber}${
-    note?.startsWith("Second half") ? "_h2" : ""
-  }`;
+  const ledgerId = `${ledgerKind}_${slot}_${userId}_c${cycleNumber}`;
   const ledgerRef = doc(firestore, "groups", group.id, "ledger", ledgerId);
 
   tx.set(paymentRef, {
@@ -564,6 +573,7 @@ export async function runNextCycle(
         cycleNumber: nextCycle,
         ledgerKind: "contribution",
         paymentType: "contribution",
+        slot: "contribution",
       });
     }
 
@@ -573,6 +583,7 @@ export async function runNextCycle(
     const payFromPot = (
       m: SimulatorMember,
       amount: number,
+      slot: "first_half" | "second_half",
       note: string,
     ) => {
       if (amount <= 0) return;
@@ -597,6 +608,7 @@ export async function runNextCycle(
         cycleNumber: nextCycle,
         ledgerKind: "payout",
         paymentType: "payout",
+        slot,
         note,
       });
     };
@@ -607,7 +619,7 @@ export async function runNextCycle(
     let firstHalfPayouts = 0;
     if (phase === "distribution") {
       for (const m of preview.firstHalfRecipients) {
-        payFromPot(m, halfPayout, "First half");
+        payFromPot(m, halfPayout, "first_half", "First half");
         tx.update(doc(firestore, "groups", group.id, "members", m.id), {
           payoutCycle: nextCycle,
         });
@@ -687,7 +699,7 @@ export async function runNextCycle(
             isDf && netFirstHalfAmt < halfPayout
               ? "First half (partial)"
               : "First half";
-          payFromPot(m, netFirstHalfAmt, note);
+          payFromPot(m, netFirstHalfAmt, "first_half", note);
           tx.update(doc(firestore, "groups", group.id, "members", m.id), {
             payoutCycle: nextCycle,
           });
@@ -706,7 +718,7 @@ export async function runNextCycle(
             isDf && netSecondHalfAmt < halfPayout
               ? "Second half (partial)"
               : "Second half";
-          payFromPot(m, netSecondHalfAmt, note);
+          payFromPot(m, netSecondHalfAmt, "second_half", note);
           secondHalfPayouts += 1;
         } else if (isDf) {
           stagePaymentAndLedger(tx, group, {
@@ -717,6 +729,7 @@ export async function runNextCycle(
             cycleNumber: nextCycle,
             ledgerKind: "payout",
             paymentType: "payout",
+            slot: "second_half",
             note: "Second half (partial)",
           });
           secondHalfPayouts += 1;
@@ -743,6 +756,7 @@ export async function runNextCycle(
               position: m.position ?? 0,
               amount: penalty,
               cycleNumber: nextCycle,
+              slot: "penalty",
               ledgerKind: "penalty",
               // /payments schema only knows contribution/payout — the
               // ledger kind carries the "penalty" semantic for rollups.

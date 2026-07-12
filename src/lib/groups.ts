@@ -157,6 +157,43 @@ export function phaseLabelForCycle(
   return cycleNumber <= halfwayCycle(g) ? "Phase 1" : "Phase 2";
 }
 
+/** Shared helper: given the current members snapshot, compute what the
+ *  manager's new "(AdminPromo)" display name should be and which member
+ *  should take over the manager slot. Callers apply the writes themselves
+ *  (they may be in a batch or a transaction) — this helper only decides.
+ *  Kept in one place so transferOwnershipToManager and demoteDefaultedAdmin
+ *  can't drift out of sync. */
+export function computeManagerPromotion(args: {
+  memberDocs: Array<{ id: string; data: () => Record<string, unknown> }>;
+  formerAdminUid: string;
+  managerUid: string;
+}): { renamedName: string; nextManagerUid: string | null } {
+  const managerDoc = args.memberDocs.find((d) => d.id === args.managerUid);
+  const currentName =
+    (managerDoc?.data().name as string | undefined) ?? "Manager";
+  const renamedName = currentName.includes("(AdminPromo)")
+    ? currentName
+    : `${currentName} (AdminPromo)`;
+
+  const nextManagerDoc = args.memberDocs
+    .filter((d) => {
+      const uid = d.id;
+      if (uid === args.formerAdminUid || uid === args.managerUid) return false;
+      const data = d.data();
+      if (data.kicked) return false;
+      const missed1 = Number(data.missedCyclesPhase1 ?? 0);
+      const missed2 = Number(data.missedCyclesPhase2 ?? 0);
+      return missed1 === 0 && missed2 === 0;
+    })
+    .sort(
+      (a, b) =>
+        Number(a.data().position ?? 999) - Number(b.data().position ?? 999),
+    )[0];
+  const nextManagerUid = nextManagerDoc?.id ?? null;
+
+  return { renamedName, nextManagerUid };
+}
+
 // Mirrors FirestoreService.transferOwnershipToManager: batch-swaps
 // createdBy + roles, and clears the escalation flag atomically.
 export async function transferOwnershipToManager(groupId: string): Promise<void> {
@@ -177,32 +214,11 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
   const managerUid = managers[0].id;
   if (managerUid === formerAdminUid) throw new Error("Manager is already the primary admin.");
 
-  // Rename the promoted manager with an "(AdminPromo)" suffix so the
-  // money-flow CSV, Users page, and mobile roster make the swap
-  // obvious. Same convention demoteDefaultedAdmin uses.
-  const managerData = managers[0].data();
-  const managerName = (managerData.name as string | undefined) ?? "Manager";
-  const renamed = managerName.includes("(AdminPromo)")
-    ? managerName
-    : `${managerName} (AdminPromo)`;
-
-  // Auto-promote the next non-defaulted, non-kicked member (by position)
-  // to manager so the group keeps a designated manager.
-  const nextManagerDoc = membersSnap.docs
-    .filter((d) => {
-      const uid = d.id;
-      if (uid === formerAdminUid || uid === managerUid) return false;
-      const data = d.data();
-      if (data.kicked) return false;
-      const missed1 = Number(data.missedCyclesPhase1 ?? 0);
-      const missed2 = Number(data.missedCyclesPhase2 ?? 0);
-      return missed1 === 0 && missed2 === 0;
-    })
-    .sort(
-      (a, b) =>
-        Number(a.data().position ?? 999) - Number(b.data().position ?? 999),
-    )[0];
-  const newManagerUid = nextManagerDoc?.id ?? null;
+  const { renamedName, nextManagerUid } = computeManagerPromotion({
+    memberDocs: membersSnap.docs,
+    formerAdminUid,
+    managerUid,
+  });
 
   const batch = writeBatch(firestore);
   batch.update(groupRef, {
@@ -213,14 +229,14 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
   });
   batch.update(doc(membersCol, managerUid), {
     role: "admin",
-    name: renamed,
+    name: renamedName,
   });
   batch.update(doc(firestore, "users", managerUid), {
-    name: renamed,
+    name: renamedName,
   });
   batch.update(doc(membersCol, formerAdminUid), { role: "member" });
-  if (newManagerUid) {
-    batch.update(doc(membersCol, newManagerUid), { role: "manager" });
+  if (nextManagerUid) {
+    batch.update(doc(membersCol, nextManagerUid), { role: "manager" });
   }
   await batch.commit();
   await writeAudit({
@@ -765,26 +781,11 @@ export async function demoteDefaultedAdmin(groupId: string): Promise<{
     );
   }
   const managerUid = managerDoc.id;
-  const managerData = managerDoc.data();
-  const managerName = (managerData.name as string | undefined) ?? "Manager";
-
-  // Next non-defaulted, non-admin, non-manager member becomes the new
-  // manager. Sorted by position for determinism.
-  const nextManagerDoc = membersSnap.docs
-    .filter((d) => {
-      const uid = d.id;
-      if (uid === adminUid || uid === managerUid) return false;
-      const data = d.data();
-      if (data.kicked) return false;
-      const missed1 = Number(data.missedCyclesPhase1 ?? 0);
-      const missed2 = Number(data.missedCyclesPhase2 ?? 0);
-      return missed1 === 0 && missed2 === 0;
-    })
-    .sort(
-      (a, b) =>
-        Number(a.data().position ?? 999) - Number(b.data().position ?? 999),
-    )[0];
-  const newManagerUid = nextManagerDoc?.id ?? null;
+  const { renamedName, nextManagerUid } = computeManagerPromotion({
+    memberDocs: membersSnap.docs,
+    formerAdminUid: adminUid,
+    managerUid,
+  });
 
   const adminMemberDoc = membersSnap.docs.find((d) => d.id === adminUid);
   const adminPosition = Number(adminMemberDoc?.data().position ?? 0);
@@ -802,26 +803,17 @@ export async function demoteDefaultedAdmin(groupId: string): Promise<{
       demotedReason: "Defaulted on Phase 1 contributions (admin_default)",
     });
 
-    // Promote manager to admin. Also rename with the "(AdminPromo)"
-    // suffix on both the group's member doc AND their top-level users/{uid}
-    // profile so the money-flow CSV and every roster view surfaces the swap.
-    const suffix = " (AdminPromo)";
-    const renamed = managerName.includes("(AdminPromo)")
-      ? managerName
-      : `${managerName}${suffix}`;
+    // Promote manager to admin with the "(AdminPromo)" rename.
     tx.update(doc(membersCol, managerUid), {
       role: "admin",
-      name: renamed,
+      name: renamedName,
     });
     tx.update(doc(firestore, "users", managerUid), {
-      name: renamed,
+      name: renamedName,
     });
 
-    // Auto-promote next member to manager (best-effort — leaves the slot
-    // empty if there are no eligible candidates, which the super admin can
-    // fill from the panel).
-    if (newManagerUid) {
-      tx.update(doc(membersCol, newManagerUid), { role: "manager" });
+    if (nextManagerUid) {
+      tx.update(doc(membersCol, nextManagerUid), { role: "manager" });
     }
 
     tx.update(groupRef, {
@@ -841,11 +833,15 @@ export async function demoteDefaultedAdmin(groupId: string): Promise<{
     after: {
       demotedUid: adminUid,
       newAdminUid: managerUid,
-      newManagerUid,
+      newManagerUid: nextManagerUid,
     },
   });
 
-  return { demotedUid: adminUid, newAdminUid: managerUid, newManagerUid };
+  return {
+    demotedUid: adminUid,
+    newAdminUid: managerUid,
+    newManagerUid: nextManagerUid,
+  };
 }
 
 // PR 5c stub — Cancel the group and refund every member. Full implementation
