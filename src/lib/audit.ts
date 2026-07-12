@@ -52,7 +52,9 @@ export type AuditAction =
   | "exit_simulation"
   | "approve_store"
   | "reject_store"
-  | "revoke_store";
+  | "revoke_store"
+  | "suspend_store"
+  | "reinstate_store";
 
 export type AuditTargetType =
   | "group"

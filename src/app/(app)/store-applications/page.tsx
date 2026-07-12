@@ -21,11 +21,12 @@ import { StoreStatusBadge } from "./store-status-badge";
 import { approveStore, rejectStore, revokeStore, subscribeStores, type Store as StoreDoc, type StoreStatus } from "@/lib/stores";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 
-type Filter = "pending" | "active" | "rejected" | "all";
+type Filter = "pending" | "active" | "suspended" | "rejected" | "all";
 
 const FILTER_LABELS: Record<Filter, string> = {
   pending: "Pending",
   active: "Active",
+  suspended: "Suspended",
   rejected: "Rejected & revoked",
   all: "All",
 };
@@ -69,6 +70,7 @@ export default function StoreApplicationsPage() {
     return {
       pending: stores.filter((s) => s.status === "pending").length,
       active: stores.filter((s) => s.status === "active").length,
+      suspended: stores.filter((s) => s.status === "suspended").length,
       rejected: stores.filter((s) => s.status === "rejected" || s.status === "revoked").length,
       all: stores.length,
     } as Record<Filter, number>;
@@ -178,7 +180,7 @@ export default function StoreApplicationsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {(["pending", "active", "rejected", "all"] as Filter[]).map((f) => (
+          {(["pending", "active", "suspended", "rejected", "all"] as Filter[]).map((f) => (
             <Button
               key={f}
               size="sm"

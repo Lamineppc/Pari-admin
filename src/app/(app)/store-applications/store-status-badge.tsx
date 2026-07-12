@@ -12,6 +12,11 @@ const STYLES: Record<StoreStatus, { label: string; className: string }> = {
     className:
       "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
   },
+  suspended: {
+    label: "Suspended",
+    className:
+      "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+  },
   rejected: {
     label: "Rejected",
     className:
