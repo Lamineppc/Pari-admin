@@ -255,8 +255,10 @@ export async function computeMoneyFlow(groupId: string): Promise<MoneyFlowReport
   const cycles: MoneyFlowCycle[] = [];
   let runningPot = 0;
   for (const c of sortedCycles) {
-    const delta =
-      c.contributionsIn + c.penaltiesIn - c.payoutsOut - c.refundsOut;
+    // Penalties bypass the pot (member wallet → platform), so they don't
+    // affect the running pot balance. Kept as a per-cycle rollup line
+    // just for reporting.
+    const delta = c.contributionsIn - c.payoutsOut - c.refundsOut;
     runningPot += delta;
     const phase =
       c.cycleNumber <= 0
@@ -279,9 +281,13 @@ export async function computeMoneyFlow(groupId: string): Promise<MoneyFlowReport
     });
   }
 
+  // Penalties are now drawn from the defaulter's own wallet directly to
+  // the Pari platform wallet — they never touch the group pot. So the
+  // pot's balance is contributions in minus payouts + refunds out, and
+  // the penalty rollup is a separate line item used only for per-member
+  // net calculations.
   const computedPotBalance =
-    totals.contributions.amount +
-    totals.penalties.amount -
+    totals.contributions.amount -
     totals.payouts.amount -
     totals.refunds.amount;
 
