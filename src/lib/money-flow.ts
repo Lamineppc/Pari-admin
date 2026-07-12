@@ -227,7 +227,11 @@ export async function computeMoneyFlow(groupId: string): Promise<MoneyFlowReport
       paidPenalty: agg.paidPenalty,
       receivedPayout: agg.receivedPayout,
       receivedRefund: agg.receivedRefund,
-      net: agg.receivedPayout + agg.receivedRefund - agg.contributed - agg.paidPenalty,
+      // receivedPayout is already net of any penalty (the sim credits
+      // the reduced amount to the member's wallet and routes the
+      // penalty portion straight to the platform). paidPenalty is kept
+      // as an informational line but not subtracted again from net.
+      net: agg.receivedPayout + agg.receivedRefund - agg.contributed,
     });
   }
   // Add members that appear in members collection but never in the ledger.
@@ -255,10 +259,11 @@ export async function computeMoneyFlow(groupId: string): Promise<MoneyFlowReport
   const cycles: MoneyFlowCycle[] = [];
   let runningPot = 0;
   for (const c of sortedCycles) {
-    // Penalties bypass the pot (member wallet → platform), so they don't
-    // affect the running pot balance. Kept as a per-cycle rollup line
-    // just for reporting.
-    const delta = c.contributionsIn - c.payoutsOut - c.refundsOut;
+    // Penalties are pot outflows (pot → platform) representing the
+    // amount deducted from a defaulter's Terminal payout. They reduce
+    // the pot alongside payouts and refunds.
+    const delta =
+      c.contributionsIn - c.payoutsOut - c.refundsOut - c.penaltiesIn;
     runningPot += delta;
     const phase =
       c.cycleNumber <= 0
@@ -281,15 +286,15 @@ export async function computeMoneyFlow(groupId: string): Promise<MoneyFlowReport
     });
   }
 
-  // Penalties are now drawn from the defaulter's own wallet directly to
-  // the Pari platform wallet — they never touch the group pot. So the
-  // pot's balance is contributions in minus payouts + refunds out, and
-  // the penalty rollup is a separate line item used only for per-member
-  // net calculations.
+  // Penalty is deducted from the defaulter's Terminal payout: pot pays
+  // the reduced (net) payout to the member AND separately pays the
+  // penalty portion to the Pari platform. Both are pot outflows, so the
+  // reconciliation subtracts penalties as well.
   const computedPotBalance =
     totals.contributions.amount -
     totals.payouts.amount -
-    totals.refunds.amount;
+    totals.refunds.amount -
+    totals.penalties.amount;
 
   let actualPotBalance: number | null = null;
   let potDiscrepancy: number | null = null;

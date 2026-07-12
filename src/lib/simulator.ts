@@ -666,32 +666,49 @@ export async function runNextCycle(
           secondHalfAmt = halfPayout;
         }
 
-        // Pay first half in full (proportional amount for a defaulter is
-        // the amount they're entitled to; the ledger records what actually
-        // moved from the pot into the member's wallet).
-        if (firstHalfAmt > 0) {
-          payFromPot(
-            m,
-            firstHalfAmt,
-            isDf && firstHalfAmt < halfPayout ? "First half (partial)" : "First half",
-          );
+        // Compute penalty and net-out from the second-half first, then
+        // spill remainder into first-half. This keeps the recorded
+        // payout entries showing what the member ACTUALLY received —
+        // i.e. penalty is "deducted from the payout" rather than paid
+        // separately from the member's wallet.
+        const missed = eff.p1 + eff.p2;
+        const rawPenalty = missed * penaltyPerMissedCycle;
+        const grossPayout = firstHalfAmt + secondHalfAmt;
+        const penalty = Math.min(rawPenalty, grossPayout);
+        const secondHalfDeduction = Math.min(secondHalfAmt, penalty);
+        const firstHalfDeduction = penalty - secondHalfDeduction;
+        const netFirstHalfAmt = firstHalfAmt - firstHalfDeduction;
+        const netSecondHalfAmt = secondHalfAmt - secondHalfDeduction;
+
+        // Pay net first-half to member (reduced only if penalty
+        // couldn't be fully absorbed by second-half).
+        if (netFirstHalfAmt > 0) {
+          const note =
+            isDf && netFirstHalfAmt < halfPayout
+              ? "First half (partial)"
+              : "First half";
+          payFromPot(m, netFirstHalfAmt, note);
           tx.update(doc(firestore, "groups", group.id, "members", m.id), {
             payoutCycle: nextCycle,
           });
           firstHalfPayouts += 1;
+        } else if (firstHalfAmt > 0) {
+          // Mark payoutCycle even when the entire first-half was consumed
+          // by penalty, so the member is tracked as "first-half paid."
+          tx.update(doc(firestore, "groups", group.id, "members", m.id), {
+            payoutCycle: nextCycle,
+          });
         }
 
-        // Pay second half in full.
-        if (secondHalfAmt > 0) {
-          payFromPot(
-            m,
-            secondHalfAmt,
-            isDf && secondHalfAmt < halfPayout ? "Second half (partial)" : "Second half",
-          );
+        // Pay net second-half to member.
+        if (netSecondHalfAmt > 0) {
+          const note =
+            isDf && netSecondHalfAmt < halfPayout
+              ? "Second half (partial)"
+              : "Second half";
+          payFromPot(m, netSecondHalfAmt, note);
           secondHalfPayouts += 1;
         } else if (isDf) {
-          // Zero-amount second-half row keeps the CSV honest even when
-          // the defaulter is entitled to nothing (fully missed Phase 2).
           stagePaymentAndLedger(tx, group, {
             userId: m.id,
             userName: m.name,
@@ -705,22 +722,16 @@ export async function runNextCycle(
           secondHalfPayouts += 1;
         }
 
-        // Penalty is drawn from the defaulter's own wallet (funded by the
-        // Terminal payouts we just credited) and swept to the platform.
-        // This keeps the pot's contributions/payouts balanced and lets the
-        // money-flow report compute a correct net: the defaulter's
-        // receivedPayout reflects the full pot outflow and paidPenalty
-        // reflects only what left their wallet toward the platform — no
-        // double-counting.
-        const missed = eff.p1 + eff.p2;
-        const rawPenalty = missed * penaltyPerMissedCycle;
-        const grossPayout = firstHalfAmt + secondHalfAmt;
-        const penalty = Math.min(rawPenalty, grossPayout);
+        // Penalty amount goes from pot to platform. This is a pot
+        // outflow, so the money-flow report reflects it in the pot
+        // reconciliation (contributions - payouts - refunds - penalties).
         if (penalty > 0) {
-          const walletId = userWalletId(m.id);
-          const w = wallets.get(walletId)!;
-          if (w.balance >= penalty) {
-            wallets.set(walletId, { ...w, balance: w.balance - penalty });
+          const pot = wallets.get(groupPotId(group.id))!;
+          if (pot.balance >= penalty) {
+            wallets.set(groupPotId(group.id), {
+              ...pot,
+              balance: pot.balance - penalty,
+            });
             const platform = wallets.get(PLATFORM_WALLET_ID)!;
             wallets.set(PLATFORM_WALLET_ID, {
               ...platform,
