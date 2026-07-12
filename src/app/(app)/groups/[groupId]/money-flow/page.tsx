@@ -171,7 +171,7 @@ export default function MoneyFlowPage() {
             </span>
           </div>
           <div className="mt-1 text-[11px] text-muted-foreground">
-            in + penalties − out − refunds
+            in − out − refunds − penalties
           </div>
         </div>
         <div className="rounded-md border p-4">
