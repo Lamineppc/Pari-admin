@@ -59,6 +59,7 @@ export type Group = {
   // Deducted from the defaulter's Terminal payout and swept to the Pari
   // platform wallet. Defaults to 0 for legacy groups.
   penaltyPerMissedCycle: number;
+  useSlots: boolean;
 };
 
 function toGroup(snap: QueryDocumentSnapshot): Group {
@@ -86,6 +87,7 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
     moneyProvider:
       (d.moneyProvider as "mock" | "orange_money" | undefined) ?? null,
     penaltyPerMissedCycle: Number(d.penaltyPerMissedCycle ?? 0),
+    useSlots: Boolean(d.useSlots ?? false),
   };
 }
 
@@ -443,6 +445,55 @@ function toLedgerEntry(snap: QueryDocumentSnapshot): LedgerEntry {
     paymentId: (d.paymentId as string | undefined) ?? null,
     note: (d.note as string | undefined) ?? null,
   };
+}
+
+export type SlotOwnerSummary = {
+  userId: string;
+  name: string;
+  share: number;
+};
+
+export type SlotSummary = {
+  id: string;
+  position: number;
+  owners: SlotOwnerSummary[];
+  pendingSecondaryUserId: string | null;
+  payoutCycle: number | null;
+};
+
+export function subscribeSlots(
+  groupId: string,
+  cb: (slots: SlotSummary[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups", groupId, "slots"),
+    orderBy("position", "asc"),
+  );
+  return onSnapshot(
+    q,
+    (s) =>
+      cb(
+        s.docs.map((d) => {
+          const data = d.data();
+          const rawOwners = Array.isArray(data.owners) ? data.owners : [];
+          const pending = data.pendingSecondary as { userId?: string } | undefined;
+          return {
+            id: d.id,
+            position: Number(data.position ?? 0),
+            owners: rawOwners.map((o) => ({
+              userId: String((o as { userId?: unknown })?.userId ?? ""),
+              name: String((o as { name?: unknown })?.name ?? ""),
+              share: Number((o as { share?: unknown })?.share ?? 0),
+            })),
+            pendingSecondaryUserId: pending?.userId ?? null,
+            payoutCycle:
+              typeof data.payoutCycle === "number" ? data.payoutCycle : null,
+          };
+        }),
+      ),
+    (err) => onError?.(err),
+  );
 }
 
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep

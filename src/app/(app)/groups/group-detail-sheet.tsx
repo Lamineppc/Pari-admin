@@ -24,11 +24,13 @@ import {
   securedPhase,
   setGroupStatus,
   subscribeLedger,
+  subscribeSlots,
   takeOverAsCaretaker,
   transferOwnershipToManager,
   type Group,
   type LedgerEntry,
   type LedgerKind,
+  type SlotSummary,
 } from "@/lib/groups";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -78,6 +80,7 @@ export function GroupDetailSheet({
     "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | "demote" | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
+  const [slots, setSlots] = useState<SlotSummary[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
   const [skipSet, setSkipSet] = useState<Set<string>>(new Set());
@@ -90,6 +93,19 @@ export function GroupDetailSheet({
     const unsub = subscribeLedger(group.id, setLedger, 25, () => setLedger([]));
     return unsub;
   }, [group?.id]);
+
+  useEffect(() => {
+    if (!group) {
+      setSlots(null);
+      return;
+    }
+    if (!group.useSlots) {
+      setSlots([]);
+      return;
+    }
+    const unsub = subscribeSlots(group.id, setSlots, () => setSlots([]));
+    return unsub;
+  }, [group?.id, group?.useSlots]);
 
   useEffect(() => {
     if (!group || !isMockMoneyGroup(group)) {
@@ -593,6 +609,18 @@ export function GroupDetailSheet({
             </>
           )}
 
+          {group.useSlots && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Slots ({slots?.length ?? "…"})
+                </div>
+                <SlotList slots={slots} adminUid={group.createdBy} />
+              </div>
+            </>
+          )}
+
           <Separator />
 
           <div className="flex flex-col gap-2">
@@ -613,6 +641,56 @@ export function GroupDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function SlotList({
+  slots,
+  adminUid,
+}: {
+  slots: SlotSummary[] | null;
+  adminUid: string;
+}) {
+  if (slots === null) {
+    return <div className="text-xs text-muted-foreground">Loading slots…</div>;
+  }
+  if (slots.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        No slots — this useSlots group has an empty rotation.
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      {slots.map((s) => (
+        <div
+          key={s.id}
+          className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs"
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-muted-foreground">#{s.position}</span>
+            <span className="font-mono text-[10px] text-muted-foreground">{s.id}</span>
+          </div>
+          <div className="flex-1 truncate">
+            {s.owners.length === 0
+              ? <span className="italic text-muted-foreground">empty</span>
+              : s.owners
+                  .map(
+                    (o) =>
+                      `${o.name || o.userId.slice(0, 6)}${o.userId === adminUid ? " (admin)" : ""} ×${o.share}`,
+                  )
+                  .join(" + ")}
+            {s.pendingSecondaryUserId && (
+              <span className="ml-2 text-amber-600">→ pending</span>
+            )}
+          </div>
+          {s.payoutCycle !== null && (
+            <span className="text-[10px] text-blue-600">paid c{s.payoutCycle}</span>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

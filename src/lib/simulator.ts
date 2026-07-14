@@ -316,6 +316,7 @@ async function loadContext(groupId: string): Promise<{ group: Group; members: Si
     createdAt: null,
     moneyProvider: (g.moneyProvider as Group["moneyProvider"] | undefined) ?? null,
     penaltyPerMissedCycle: Number(g.penaltyPerMissedCycle ?? 0),
+    useSlots: Boolean(g.useSlots ?? false),
   };
 
   const membersSnap = await getDocs(collection(firestore, "groups", groupId, "members"));
