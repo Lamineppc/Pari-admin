@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { UsersRound, Search, ShieldPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EscalationBadge } from "@/components/escalation-badge";
-import { GroupDetailSheet } from "./group-detail-sheet";
 import { NewMockGroupDialog } from "./new-mock-group-dialog";
 import { isMockMoneyGroup, phaseLabelForCycle, subscribeGroups, type Group } from "@/lib/groups";
 import { trashAllMockGroups } from "@/lib/mock-groups";
@@ -24,9 +23,9 @@ import { Beaker, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function GroupsPage() {
+  const router = useRouter();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -37,11 +36,12 @@ export default function GroupsPage() {
     return unsub;
   }, []);
 
-  // Deep-link support: global search sends users here with ?selected=<id>.
+  // Deep-link support: legacy ?selected=<id> from older links now navigates
+  // straight to the full detail page.
   useEffect(() => {
     const sel = searchParams.get("selected");
-    if (sel) setSelectedId(sel);
-  }, [searchParams]);
+    if (sel) router.replace(`/groups/${sel}`);
+  }, [searchParams, router]);
 
   const filtered = useMemo(() => {
     if (!groups) return null;
@@ -54,8 +54,6 @@ export default function GroupsPage() {
         g.createdBy.toLowerCase().includes(needle),
     );
   }, [groups, q]);
-
-  const selected = groups?.find((g) => g.id === selectedId) ?? null;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -90,7 +88,7 @@ export default function GroupsPage() {
           >
             <Trash2 /> Nuke all mock groups
           </Button>
-          <NewMockGroupDialog onCreated={(id) => setSelectedId(id)} />
+          <NewMockGroupDialog onCreated={(id) => router.push(`/groups/${id}`)} />
         </div>
         <div className="relative max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -130,7 +128,7 @@ export default function GroupsPage() {
               return (
                 <TableRow
                   key={g.id}
-                  onClick={() => setSelectedId(g.id)}
+                  onClick={() => router.push(`/groups/${g.id}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="font-medium">{g.name || "(untitled)"}</TableCell>
@@ -183,7 +181,6 @@ export default function GroupsPage() {
         </Table>
       </div>
 
-      <GroupDetailSheet group={selected} onOpenChange={(o) => !o && setSelectedId(null)} />
     </div>
   );
 }

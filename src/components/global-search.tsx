@@ -76,7 +76,7 @@ export function GlobalSearch() {
     setOpen(false);
     setQ("");
     setResults(null);
-    if (r.kind === "group") router.push(`/groups?selected=${r.id}`);
+    if (r.kind === "group") router.push(`/groups/${r.id}`);
     else if (r.kind === "user") router.push(`/users?selected=${r.id}`);
     else router.push(`/store-applications?selected=${r.id}`);
   }

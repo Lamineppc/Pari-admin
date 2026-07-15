@@ -104,7 +104,7 @@ export default function MoneyFlowPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => router.push(`/groups?selected=${report.groupId}`)}
+            onClick={() => router.push(`/groups/${report.groupId}`)}
           >
             <ArrowLeft /> Back to group
           </Button>

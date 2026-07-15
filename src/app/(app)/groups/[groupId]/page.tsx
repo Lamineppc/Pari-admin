@@ -2,17 +2,27 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { BarChart3, Beaker, Eye, FastForward, PauseCircle, PlayCircle, RefreshCw, ShieldCheck, ShieldPlus, Ban, Trash2, UserX, X, Wallet as WalletIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  ArrowLeft,
+  BarChart3,
+  Beaker,
+  Eye,
+  FastForward,
+  PauseCircle,
+  PlayCircle,
+  RefreshCw,
+  ShieldCheck,
+  ShieldPlus,
+  Ban,
+  Trash2,
+  UserX,
+  X,
+  Wallet as WalletIcon,
+} from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EscalationBadge } from "@/components/escalation-badge";
 import {
   addMeAsObserver,
@@ -23,6 +33,7 @@ import {
   kickDefaultedAdmin,
   securedPhase,
   setGroupStatus,
+  subscribeGroup,
   subscribeLedger,
   subscribeSlots,
   takeOverAsCaretaker,
@@ -68,16 +79,26 @@ function fmtDate(d: Date | null) {
   });
 }
 
-export function GroupDetailSheet({
-  group,
-  onOpenChange,
-}: {
-  group: Group | null;
-  onOpenChange: (open: boolean) => void;
-}) {
+export default function GroupDetailPage() {
+  const params = useParams<{ groupId: string }>();
   const router = useRouter();
+  const groupId = params?.groupId ?? null;
+
+  const [group, setGroup] = useState<Group | null | undefined>(undefined);
   const [busy, setBusy] = useState<
-    "promote" | "status" | "clear" | "caretaker" | "cancel" | "simulate" | "join" | "trash" | "refill" | "detect" | "kick" | "demote" | null
+    | "promote"
+    | "status"
+    | "clear"
+    | "caretaker"
+    | "cancel"
+    | "simulate"
+    | "join"
+    | "trash"
+    | "refill"
+    | "detect"
+    | "kick"
+    | "demote"
+    | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [slots, setSlots] = useState<SlotSummary[] | null>(null);
@@ -86,13 +107,23 @@ export function GroupDetailSheet({
   const [skipSet, setSkipSet] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!group) {
-      setLedger(null);
-      return;
-    }
-    const unsub = subscribeLedger(group.id, setLedger, 25, () => setLedger([]));
+    if (!groupId) return;
+    const unsub = subscribeGroup(
+      groupId,
+      setGroup,
+      (e) => {
+        toast.error(e.message);
+        setGroup(null);
+      },
+    );
     return unsub;
-  }, [group?.id]);
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const unsub = subscribeLedger(groupId, setLedger, 25, () => setLedger([]));
+    return unsub;
+  }, [groupId]);
 
   useEffect(() => {
     if (!group) {
@@ -137,7 +168,33 @@ export function GroupDetailSheet({
     group ? isMockMoneyGroup(group) : false,
   ]);
 
-  if (!group) return null;
+  if (group === undefined) {
+    return (
+      <div className="mx-auto flex max-w-4xl flex-col gap-4">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+
+  if (group === null) {
+    return (
+      <div className="mx-auto flex max-w-4xl flex-col gap-4">
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={() => router.push("/groups")}
+        >
+          <ArrowLeft /> Back to groups
+        </Button>
+        <div className="rounded-md border p-6 text-sm text-muted-foreground">
+          Group not found. It may have been deleted.
+        </div>
+      </div>
+    );
+  }
 
   const isActive = group.status === "active";
   const phase = securedPhase(group);
@@ -209,8 +266,6 @@ export function GroupDetailSheet({
 
   async function refillWallets() {
     if (!group) return;
-    // Enough for the remaining cycles plus one buffer, sized to the group's
-    // memberCount + amount so a full rotation still fits.
     const perMember = group.amount * group.memberCount + group.amount;
     setBusy("refill");
     try {
@@ -239,7 +294,7 @@ export function GroupDetailSheet({
     try {
       await trashMockGroup(group.id);
       toast.success("Simulation group deleted.");
-      onOpenChange(false);
+      router.push("/groups");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg);
@@ -287,10 +342,6 @@ export function GroupDetailSheet({
       if (result.escalation) {
         surfaceEscalationDiagnostic(result.escalation, group.currency);
       }
-      // Skip selection persists across runs — the detector relies on
-      // consistent missed cycles, and resetting after every click meant
-      // the user had to re-tick every time. Use "Clear selections" in
-      // the panel to reset explicitly.
       const next = await previewNextCycle(group.id);
       setSimPreview(next);
     } catch (e) {
@@ -328,319 +379,300 @@ export function GroupDetailSheet({
   }
 
   return (
-    <Sheet open={!!group} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle className="flex flex-wrap items-center gap-2">
-            {group.name}
-            {group.adminEscalationFlag && <EscalationBadge flag={group.adminEscalationFlag} />}
-            {isCaretaker && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
-                <ShieldPlus className="h-3 w-3" /> Caretaker admin
-              </span>
-            )}
-            {isMock && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200">
-                <Beaker className="h-3 w-3" /> Simulation
-              </span>
-            )}
-          </SheetTitle>
-          <SheetDescription>
-            {group.type === "secured" ? "Secured tontine" : "Traditional tontine"} — {group.description || "no description"}
-          </SheetDescription>
-        </SheetHeader>
+    <div className="mx-auto flex max-w-4xl flex-col gap-6">
+      <div className="flex items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => router.push("/groups")}
+        >
+          <ArrowLeft /> Back to groups
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => router.push(`/groups/${group.id}/money-flow`)}
+        >
+          <BarChart3 /> Full money-flow report
+        </Button>
+      </div>
 
-        {isMock && (
-          <div className="mx-4 rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900 dark:border-purple-900 dark:bg-purple-950/40 dark:text-purple-200">
-            <span className="font-semibold">Simulation — no real money.</span> All
-            balances are mock. See docs/mock_money.md for details.
-          </div>
-        )}
-
-        <div className="flex flex-col gap-4 px-4 pb-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <Field label="Status" value={isActive ? "Active" : "Inactive"} />
-            <Field label="Members" value={String(group.memberCount)} />
-            <Field label="Contribution" value={fmtCurrency(group.amount, group.currency)} />
-            <Field label="Frequency" value={group.frequency} />
-            {group.type === "secured" && (
-              <>
-                <Field
-                  label="Phase (current)"
-                  value={PHASE_LABELS[phase] ?? phase}
-                />
-                <Field
-                  label="Cycle"
-                  value={
-                    group.currentCycle
-                      ? `${group.currentCycle} / ${group.memberCount}${
-                          group.currentCycle >= group.memberCount
-                            ? " · closed"
-                            : ""
-                        }`
-                      : `Not started (0 / ${group.memberCount})`
-                  }
-                />
-                {(() => {
-                  const next = (group.currentCycle ?? 0) + 1;
-                  if (next > group.memberCount) return null;
-                  const halfway = Math.floor(group.memberCount / 2);
-                  const nextPhase =
-                    next === group.memberCount
-                      ? "Terminal"
-                      : next > halfway
-                        ? "Distribution (Phase 2)"
-                        : "Collateral (Phase 1)";
-                  return (
-                    <Field
-                      label="Next cycle"
-                      value={`${next} — ${nextPhase}`}
-                    />
-                  );
-                })()}
-              </>
-            )}
-            <Field label="Created" value={fmtDate(group.createdAt)} />
-            <Field label="Admin uid" value={group.createdBy} mono />
-          </div>
-
-          {group.adminEscalationFlag && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40">
-                <div className="font-medium text-red-800 dark:text-red-200">Escalation raised</div>
-                <div className="text-red-700 dark:text-red-300">
-                  {group.adminEscalationReason ?? "No reason recorded."}
-                </div>
-                <div className="text-xs text-red-600/80 dark:text-red-400/80">
-                  Flagged {fmtDate(group.adminEscalationFlaggedAt)}
-                </div>
-              </div>
-            </>
+      <header className="flex flex-col gap-2">
+        <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
+          {group.name}
+          {group.adminEscalationFlag && <EscalationBadge flag={group.adminEscalationFlag} />}
+          {isCaretaker && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+              <ShieldPlus className="h-3 w-3" /> Caretaker admin
+            </span>
           )}
+          {isMock && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-800 dark:border-purple-900 dark:bg-purple-950 dark:text-purple-200">
+              <Beaker className="h-3 w-3" /> Simulation
+            </span>
+          )}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {group.type === "secured" ? "Secured tontine" : "Traditional tontine"} —{" "}
+          {group.description || "no description"}
+        </p>
+      </header>
 
-          <Separator />
+      {isMock && (
+        <div className="rounded-md border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-900 dark:border-purple-900 dark:bg-purple-950/40 dark:text-purple-200">
+          <span className="font-semibold">Simulation — no real money.</span> All
+          balances are mock. See docs/mock_money.md for details.
+        </div>
+      )}
 
-          <div className="flex flex-col gap-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Super-admin actions
-            </div>
-            {flag === "admin_default" && (
-              <Button
-                variant="default"
-                disabled={busy !== null}
-                onClick={() =>
-                  run(
-                    "promote",
-                    () => transferOwnershipToManager(group.id),
-                    "Manager promoted to admin.",
-                  )
-                }
-              >
-                <ShieldCheck /> Promote manager to admin
-              </Button>
-            )}
-            {(flag === "admin_default" || flag === "both_default") && isMock && (
-              <Button
-                variant="destructive"
-                disabled={busy !== null}
-                onClick={kickDefaulted}
-              >
-                <UserX />{" "}
-                {flag === "both_default"
-                  ? "Kick admin + manager, refund, take over"
-                  : "Kick defaulted admin, refund, promote manager"}
-              </Button>
-            )}
-            {flag === "admin_default" && isMock && (
-              <Button
-                variant="outline"
-                disabled={busy !== null}
-                onClick={demoteDefaulted}
-              >
-                <UserX /> Demote admin (keep in group, promote manager to AdminPromo)
-              </Button>
-            )}
-            {showCaretakerAction && !isCaretaker && (
-              <Button
-                variant="default"
-                disabled={busy !== null}
-                onClick={() =>
-                  run(
-                    "caretaker",
-                    () => takeOverAsCaretaker(group.id),
-                    "You are now the caretaker admin.",
-                  )
-                }
-              >
-                <ShieldPlus /> Take over as caretaker admin
-              </Button>
-            )}
-            {showCancelAction && (
-              <Button
-                variant="destructive"
-                disabled={busy !== null}
-                onClick={() =>
-                  run(
-                    "cancel",
-                    () => cancelAndRefundGroup(group.id),
-                    "Group cancelled and members refunded.",
-                  )
-                }
-              >
-                <Ban /> Cancel + refund all members
-              </Button>
-            )}
-            {flag && (
-              <Button
-                variant="outline"
-                disabled={busy !== null}
-                onClick={() =>
-                  run("clear", () => clearAdminEscalation(group.id), "Escalation flag cleared.")
-                }
-              >
-                <X /> Dismiss escalation (false positive)
-              </Button>
-            )}
+      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <Field label="Status" value={isActive ? "Active" : "Inactive"} />
+        <Field label="Members" value={String(group.memberCount)} />
+        <Field label="Contribution" value={fmtCurrency(group.amount, group.currency)} />
+        <Field label="Frequency" value={group.frequency} />
+        {group.type === "secured" && (
+          <>
+            <Field label="Phase (current)" value={PHASE_LABELS[phase] ?? phase} />
+            <Field
+              label="Cycle"
+              value={
+                group.currentCycle
+                  ? `${group.currentCycle} / ${group.memberCount}${
+                      group.currentCycle >= group.memberCount ? " · closed" : ""
+                    }`
+                  : `Not started (0 / ${group.memberCount})`
+              }
+            />
+            {(() => {
+              const next = (group.currentCycle ?? 0) + 1;
+              if (next > group.memberCount) return null;
+              const halfway = Math.floor(group.memberCount / 2);
+              const nextPhase =
+                next === group.memberCount
+                  ? "Terminal"
+                  : next > halfway
+                    ? "Distribution (Phase 2)"
+                    : "Collateral (Phase 1)";
+              return <Field label="Next cycle" value={`${next} — ${nextPhase}`} />;
+            })()}
+          </>
+        )}
+        <Field label="Created" value={fmtDate(group.createdAt)} />
+        <Field label="Admin uid" value={group.createdBy} mono />
+      </div>
+
+      {group.adminEscalationFlag && (
+        <div className="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40">
+          <div className="font-medium text-red-800 dark:text-red-200">Escalation raised</div>
+          <div className="text-red-700 dark:text-red-300">
+            {group.adminEscalationReason ?? "No reason recorded."}
+          </div>
+          <div className="text-xs text-red-600/80 dark:text-red-400/80">
+            Flagged {fmtDate(group.adminEscalationFlaggedAt)}
+          </div>
+        </div>
+      )}
+
+      <Separator />
+
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Super-admin actions
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {flag === "admin_default" && (
+            <Button
+              variant="default"
+              disabled={busy !== null}
+              onClick={() =>
+                run(
+                  "promote",
+                  () => transferOwnershipToManager(group.id),
+                  "Manager promoted to admin.",
+                )
+              }
+            >
+              <ShieldCheck /> Promote manager to admin
+            </Button>
+          )}
+          {(flag === "admin_default" || flag === "both_default") && isMock && (
+            <Button variant="destructive" disabled={busy !== null} onClick={kickDefaulted}>
+              <UserX />{" "}
+              {flag === "both_default"
+                ? "Kick admin + manager, refund, take over"
+                : "Kick defaulted admin, refund, promote manager"}
+            </Button>
+          )}
+          {flag === "admin_default" && isMock && (
+            <Button variant="outline" disabled={busy !== null} onClick={demoteDefaulted}>
+              <UserX /> Demote admin (keep in group, promote manager to AdminPromo)
+            </Button>
+          )}
+          {showCaretakerAction && !isCaretaker && (
+            <Button
+              variant="default"
+              disabled={busy !== null}
+              onClick={() =>
+                run(
+                  "caretaker",
+                  () => takeOverAsCaretaker(group.id),
+                  "You are now the caretaker admin.",
+                )
+              }
+            >
+              <ShieldPlus /> Take over as caretaker admin
+            </Button>
+          )}
+          {showCancelAction && (
+            <Button
+              variant="destructive"
+              disabled={busy !== null}
+              onClick={() =>
+                run(
+                  "cancel",
+                  () => cancelAndRefundGroup(group.id),
+                  "Group cancelled and members refunded.",
+                )
+              }
+            >
+              <Ban /> Cancel + refund all members
+            </Button>
+          )}
+          {flag && (
             <Button
               variant="outline"
               disabled={busy !== null}
               onClick={() =>
-                run(
-                  "status",
-                  () => setGroupStatus(group.id, isActive ? "inactive" : "active"),
-                  isActive ? "Group deactivated." : "Group reactivated.",
-                )
+                run("clear", () => clearAdminEscalation(group.id), "Escalation flag cleared.")
               }
             >
-              {isActive ? <PauseCircle /> : <PlayCircle />}
-              {isActive ? "Deactivate group" : "Reactivate group"}
+              <X /> Dismiss escalation (false positive)
             </Button>
-          </div>
-
-          {isMock && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Mock pot
-                </div>
-                <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-3">
-                  <div className="flex items-center gap-2">
-                    <WalletIcon className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm text-muted-foreground">Balance</span>
-                  </div>
-                  <div className="tabular-nums text-lg font-semibold">
-                    {pot ? `${pot.currency} ${pot.balance.toLocaleString()}` : "…"}
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy !== null}
-                  onClick={refillWallets}
-                >
-                  <RefreshCw /> Refill member wallets
-                </Button>
-                <p className="text-[11px] text-muted-foreground">
-                  Adds {group.currency}{" "}
-                  {(group.amount * group.memberCount + group.amount).toLocaleString()}{" "}
-                  to every non-observer member&apos;s wallet — enough for a full
-                  rotation of contributions plus one buffer.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy !== null}
-                  onClick={joinAsObserver}
-                >
-                  <Eye /> Add me as observer (mobile access)
-                </Button>
-                <p className="text-[11px] text-muted-foreground">
-                  Flips your account to a test account and drops your uid into
-                  memberIds so the mobile app shows this group in your list.
-                  Position 999 keeps you out of the payout rotation. Flip back
-                  in Users when done.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy !== null}
-                  onClick={trashGroup}
-                  className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                >
-                  <Trash2 /> Trash this simulation
-                </Button>
-                <p className="text-[11px] text-muted-foreground">
-                  Deletes the group, every synthetic sim_* user, all mock
-                  wallets, and every payment + ledger entry. Real observer
-                  accounts (yours) are left alone. No undo.
-                </p>
-              </div>
-            </>
           )}
+          <Button
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() =>
+              run(
+                "status",
+                () => setGroupStatus(group.id, isActive ? "inactive" : "active"),
+                isActive ? "Group deactivated." : "Group reactivated.",
+              )
+            }
+          >
+            {isActive ? <PauseCircle /> : <PlayCircle />}
+            {isActive ? "Deactivate group" : "Reactivate group"}
+          </Button>
+        </div>
+      </div>
 
-          {isMock && group.type === "secured" && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Secured simulator
-                </div>
-                <SimulatorPanel
-                  preview={simPreview}
-                  busy={busy === "simulate"}
-                  onRun={runSimulate}
-                  skipSet={skipSet}
-                  onToggleSkip={toggleSkip}
-                  currency={group.currency}
-                  amount={group.amount}
-                  memberCount={group.memberCount}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy !== null}
-                  onClick={checkEscalation}
-                >
-                  <ShieldPlus /> Check escalation now (diagnostic)
-                </Button>
-              </div>
-            </>
-          )}
-
-          {group.useSlots && (
-            <>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Slots ({slots?.length ?? "…"})
-                </div>
-                <SlotList slots={slots} adminUid={group.createdBy} />
-              </div>
-            </>
-          )}
-
+      {isMock && (
+        <>
           <Separator />
-
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Recent ledger
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Mock pot
+            </div>
+            <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <WalletIcon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Balance</span>
               </div>
+              <div className="tabular-nums text-lg font-semibold">
+                {pot ? `${pot.currency} ${pot.balance.toLocaleString()}` : "…"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push(`/groups/${group.id}/money-flow`)}
+                disabled={busy !== null}
+                onClick={refillWallets}
               >
-                <BarChart3 /> Full money-flow report
+                <RefreshCw /> Refill member wallets
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy !== null}
+                onClick={joinAsObserver}
+              >
+                <Eye /> Add me as observer (mobile access)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy !== null}
+                onClick={trashGroup}
+                className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+              >
+                <Trash2 /> Trash this simulation
               </Button>
             </div>
-            <LedgerList entries={ledger} currency={group.currency} />
+            <p className="text-[11px] text-muted-foreground">
+              Refill adds {group.currency}{" "}
+              {(group.amount * group.memberCount + group.amount).toLocaleString()} to
+              every non-observer member&apos;s wallet — enough for a full rotation of
+              contributions plus one buffer. Observer flips your account to a test
+              account and drops your uid into memberIds so the mobile app shows this
+              group in your list. Trash deletes the group, every synthetic sim_* user,
+              all mock wallets, and every payment + ledger entry. No undo.
+            </p>
           </div>
+        </>
+      )}
+
+      {isMock && group.type === "secured" && (
+        <>
+          <Separator />
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Secured simulator
+            </div>
+            <SimulatorPanel
+              preview={simPreview}
+              busy={busy === "simulate"}
+              onRun={runSimulate}
+              skipSet={skipSet}
+              onToggleSkip={toggleSkip}
+              currency={group.currency}
+              amount={group.amount}
+              memberCount={group.memberCount}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null}
+              onClick={checkEscalation}
+              className="self-start"
+            >
+              <ShieldPlus /> Check escalation now (diagnostic)
+            </Button>
+          </div>
+        </>
+      )}
+
+      {group.useSlots && (
+        <>
+          <Separator />
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Slots ({slots?.length ?? "…"})
+            </div>
+            <SlotList slots={slots} adminUid={group.createdBy} />
+          </div>
+        </>
+      )}
+
+      <Separator />
+
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Recent ledger
         </div>
-      </SheetContent>
-    </Sheet>
+        <LedgerList entries={ledger} currency={group.currency} />
+      </div>
+    </div>
   );
 }
 
@@ -673,14 +705,16 @@ function SlotList({
             <span className="font-mono text-[10px] text-muted-foreground">{s.id}</span>
           </div>
           <div className="flex-1 truncate">
-            {s.owners.length === 0
-              ? <span className="italic text-muted-foreground">empty</span>
-              : s.owners
-                  .map(
-                    (o) =>
-                      `${o.name || o.userId.slice(0, 6)}${o.userId === adminUid ? " (admin)" : ""} ×${o.share}`,
-                  )
-                  .join(" + ")}
+            {s.owners.length === 0 ? (
+              <span className="italic text-muted-foreground">empty</span>
+            ) : (
+              s.owners
+                .map(
+                  (o) =>
+                    `${o.name || o.userId.slice(0, 6)}${o.userId === adminUid ? " (admin)" : ""} ×${o.share}`,
+                )
+                .join(" + ")
+            )}
             {s.pendingSecondaryUserId && (
               <span className="ml-2 text-amber-600">→ pending</span>
             )}

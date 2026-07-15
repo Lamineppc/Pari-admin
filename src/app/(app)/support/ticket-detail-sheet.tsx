@@ -122,7 +122,7 @@ export function TicketDetailSheet({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => router.push(`/groups?selected=${ticket.groupId}`)}
+                onClick={() => router.push(`/groups/${ticket.groupId}`)}
               >
                 Open group <ArrowRight />
               </Button>

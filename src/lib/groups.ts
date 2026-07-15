@@ -112,6 +112,20 @@ export function subscribeGroups(cb: (groups: Group[]) => void, onError?: (e: Err
   );
 }
 
+// Live-updating stream of a single group. `cb` receives `null` if the
+// document does not exist.
+export function subscribeGroup(
+  groupId: string,
+  cb: (group: Group | null) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, "groups", groupId),
+    (snap) => cb(snap.exists() ? toGroup(snap as QueryDocumentSnapshot) : null),
+    (err) => onError?.(err),
+  );
+}
+
 // Freeze / resume a group. Mirrors FirestoreService.setGroupStatus in mobile.
 export async function setGroupStatus(groupId: string, status: GroupStatus) {
   const before = await getDoc(doc(firestore, "groups", groupId));

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, ShieldPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -11,10 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EscalationBadge } from "@/components/escalation-badge";
-import { GroupDetailSheet } from "../groups/group-detail-sheet";
 import {
   isMockMoneyGroup,
   phaseLabelForCycle,
@@ -41,8 +40,8 @@ function moneyAtRisk(g: Group): number {
 }
 
 export default function EscalationsPage() {
+  const router = useRouter();
   const [groups, setGroups] = useState<Group[] | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("age");
 
   useEffect(() => {
@@ -72,7 +71,6 @@ export default function EscalationsPage() {
 
   const activeFlags = escalated?.filter((g) => g.adminEscalationFlag !== null).length ?? 0;
   const caretakers = escalated?.filter((g) => g.caretakerBy !== null).length ?? 0;
-  const selected = groups?.find((g) => g.id === selectedId) ?? null;
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -135,7 +133,7 @@ export default function EscalationsPage() {
               return (
                 <TableRow
                   key={g.id}
-                  onClick={() => setSelectedId(g.id)}
+                  onClick={() => router.push(`/groups/${g.id}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="font-medium">
@@ -174,10 +172,6 @@ export default function EscalationsPage() {
         </Table>
       </div>
 
-      <GroupDetailSheet
-        group={selected}
-        onOpenChange={(o) => !o && setSelectedId(null)}
-      />
     </div>
   );
 }

@@ -208,7 +208,7 @@ export default function KicksPage() {
               return (
                 <TableRow
                   key={`${k.groupId}:${k.id}`}
-                  onClick={() => router.push(`/groups?selected=${k.groupId}`)}
+                  onClick={() => router.push(`/groups/${k.groupId}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
