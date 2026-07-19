@@ -510,6 +510,109 @@ export function subscribeSlots(
   );
 }
 
+// ── Members ────────────────────────────────────────────────────────────────
+
+export type MemberRole = "admin" | "manager" | "member";
+
+export type MemberSummary = {
+  userId: string;
+  name: string;
+  role: MemberRole;
+  position: number;
+  joinCycle: number;
+  payoutCycle: number | null;
+  kicked: boolean;
+};
+
+export function subscribeGroupMembers(
+  groupId: string,
+  cb: (members: MemberSummary[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups", groupId, "members"),
+    orderBy("position", "asc"),
+  );
+  return onSnapshot(
+    q,
+    (s) =>
+      cb(
+        s.docs.map((d) => {
+          const data = d.data();
+          return {
+            userId: d.id,
+            name: String(data.name ?? ""),
+            role: (data.role as MemberRole | undefined) ?? "member",
+            position: Number(data.position ?? 0),
+            joinCycle: Number(data.joinCycle ?? 1),
+            payoutCycle:
+              typeof data.payoutCycle === "number" ? data.payoutCycle : null,
+            kicked: data.kicked === true,
+          };
+        }),
+      ),
+    (err) => onError?.(err),
+  );
+}
+
+/// Super-admin role override on a specific member. No money implication;
+/// just flips the `role` field. Downgrading the current admin without
+/// promoting someone else first would leave the group orphaned, so callers
+/// (the UI) enforce the "promote first, demote after" order — the write
+/// itself doesn't police it because a super-admin sometimes needs the
+/// override for cleanup.
+export async function setMemberRole(
+  groupId: string,
+  userId: string,
+  role: MemberRole,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId, "members", userId);
+  const before = await getDoc(ref);
+  const beforeRole = before.data()?.role as MemberRole | undefined;
+  await updateDoc(ref, { role });
+  await writeAudit({
+    action: "set_member_role",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: { userId, role: beforeRole ?? null },
+    after: { userId, role },
+  });
+}
+
+/// Swap the rotation position of two members. Both writes go in one batch
+/// so the position field can never briefly duplicate. Not slot-aware yet —
+/// caller ensures the group is legacy (members-as-slots). For useSlots
+/// groups position lives on the slot doc; PR-1b's slot management will
+/// cover that path.
+export async function swapMemberPositions(
+  groupId: string,
+  userIdA: string,
+  userIdB: string,
+): Promise<void> {
+  const membersCol = collection(firestore, "groups", groupId, "members");
+  const refA = doc(membersCol, userIdA);
+  const refB = doc(membersCol, userIdB);
+  const [snapA, snapB] = await Promise.all([getDoc(refA), getDoc(refB)]);
+  const posA = snapA.data()?.position as number | undefined;
+  const posB = snapB.data()?.position as number | undefined;
+  if (typeof posA !== "number" || typeof posB !== "number") {
+    throw new Error("Could not resolve both member positions.");
+  }
+  const batch = writeBatch(firestore);
+  batch.update(refA, { position: posB });
+  batch.update(refB, { position: posA });
+  await batch.commit();
+  await writeAudit({
+    action: "swap_member_positions",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: { a: { userId: userIdA, position: posA }, b: { userId: userIdB, position: posB } },
+    after: { a: { userId: userIdA, position: posB }, b: { userId: userIdB, position: posA } },
+  });
+}
+
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep
 // the payload small; the audit UI paginates for older entries.
 export function subscribeLedger(

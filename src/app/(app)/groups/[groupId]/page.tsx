@@ -33,14 +33,19 @@ import {
   kickDefaultedAdmin,
   securedPhase,
   setGroupStatus,
+  setMemberRole,
   subscribeGroup,
+  subscribeGroupMembers,
   subscribeLedger,
   subscribeSlots,
+  swapMemberPositions,
   takeOverAsCaretaker,
   transferOwnershipToManager,
   type Group,
   type LedgerEntry,
   type LedgerKind,
+  type MemberRole,
+  type MemberSummary,
   type SlotSummary,
 } from "@/lib/groups";
 import { Badge } from "@/components/ui/badge";
@@ -101,6 +106,7 @@ export default function GroupDetailPage() {
     | null
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
+  const [members, setMembers] = useState<MemberSummary[] | null>(null);
   const [slots, setSlots] = useState<SlotSummary[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
@@ -122,6 +128,14 @@ export default function GroupDetailPage() {
   useEffect(() => {
     if (!groupId) return;
     const unsub = subscribeLedger(groupId, setLedger, 25, () => setLedger([]));
+    return unsub;
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const unsub = subscribeGroupMembers(groupId, setMembers, () =>
+      setMembers([]),
+    );
     return unsub;
   }, [groupId]);
 
@@ -668,10 +682,172 @@ export default function GroupDetailPage() {
 
       <div className="flex flex-col gap-2">
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Members ({members?.length ?? "…"})
+        </div>
+        <MemberList
+          groupId={group.id}
+          members={members}
+          adminUid={group.createdBy}
+          useSlots={group.useSlots}
+        />
+      </div>
+
+      <Separator />
+
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Recent ledger
         </div>
         <LedgerList entries={ledger} currency={group.currency} />
       </div>
+    </div>
+  );
+}
+
+// ── Members list with super-admin per-row controls ─────────────────────────
+
+function MemberList({
+  groupId,
+  members,
+  adminUid,
+  useSlots,
+}: {
+  groupId: string;
+  members: MemberSummary[] | null;
+  adminUid: string;
+  useSlots: boolean;
+}) {
+  const [swapSelection, setSwapSelection] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  if (members === null) {
+    return <Skeleton className="h-24 w-full" />;
+  }
+  if (members.length === 0) {
+    return <div className="text-sm text-muted-foreground">No members.</div>;
+  }
+
+  async function changeRole(userId: string, role: MemberRole) {
+    setBusy(`role:${userId}`);
+    try {
+      await setMemberRole(groupId, userId, role);
+      toast.success("Role updated.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not change role.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function triggerSwap(userId: string) {
+    if (useSlots) {
+      toast.error(
+        "Position swap not available on split-slot groups yet. Use PR-1b's slot management.",
+      );
+      return;
+    }
+    if (swapSelection === null) {
+      setSwapSelection(userId);
+      toast.info("Pick the second member to swap with.");
+      return;
+    }
+    if (swapSelection === userId) {
+      setSwapSelection(null);
+      return;
+    }
+    const other = swapSelection;
+    setSwapSelection(null);
+    // Warn if either member already received their payout — swap after
+    // that point rewrites cycle history in confusing ways.
+    const a = members?.find((m) => m.userId === userId);
+    const b = members?.find((m) => m.userId === other);
+    if (a?.payoutCycle != null || b?.payoutCycle != null) {
+      const ok = window.confirm(
+        "One of these members has already been paid out. Swapping their position after a payout can misalign cycle history. Continue?",
+      );
+      if (!ok) return;
+    }
+    setBusy(`swap:${userId}`);
+    try {
+      await swapMemberPositions(groupId, userId, other);
+      toast.success("Positions swapped.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not swap positions.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {members.map((m) => {
+        const isCreator = m.userId === adminUid;
+        const isSelected = swapSelection === m.userId;
+        const paid = m.payoutCycle != null;
+        const roleBusy = busy === `role:${m.userId}`;
+        const swapBusy = busy === `swap:${m.userId}`;
+        return (
+          <div
+            key={m.userId}
+            className={
+              "flex items-center gap-3 rounded-md border p-2 text-sm " +
+              (isSelected ? "border-primary bg-primary/5" : "")
+            }
+          >
+            <div className="flex h-7 w-7 items-center justify-center rounded-sm border text-xs font-semibold text-muted-foreground">
+              #{m.position}
+            </div>
+            <div className="flex flex-1 flex-col">
+              <span className="font-medium">
+                {m.name || m.userId.slice(0, 6)}
+                {isCreator && (
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    creator
+                  </Badge>
+                )}
+                {m.kicked && (
+                  <Badge variant="destructive" className="ml-2 text-[10px]">
+                    kicked
+                  </Badge>
+                )}
+                {paid && (
+                  <Badge variant="secondary" className="ml-2 text-[10px]">
+                    paid out (c{m.payoutCycle})
+                  </Badge>
+                )}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {m.role} · joined c{m.joinCycle}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <select
+                value={m.role}
+                disabled={roleBusy}
+                onChange={(e) => changeRole(m.userId, e.target.value as MemberRole)}
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+              >
+                <option value="admin">admin</option>
+                <option value="manager">manager</option>
+                <option value="member">member</option>
+              </select>
+              <Button
+                variant={isSelected ? "default" : "outline"}
+                size="sm"
+                disabled={swapBusy}
+                onClick={() => triggerSwap(m.userId)}
+              >
+                {isSelected ? "cancel" : "swap"}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      {swapSelection !== null && (
+        <div className="text-xs text-muted-foreground">
+          Pick the target member to complete the swap, or press cancel.
+        </div>
+      )}
     </div>
   );
 }
