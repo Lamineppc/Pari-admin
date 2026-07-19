@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { onAuthStateChanged, signOut as fbSignOut, type User } from "firebase/auth";
 import { firebaseAuth, SUPER_ADMIN_UID } from "./firebase";
-import { healMyProfileIfMissing } from "./users";
+import { backfillMissingCreatedAt, healMyProfileIfMissing } from "./users";
 
 type AuthState = {
   user: User | null;
@@ -30,6 +30,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         healMyProfileIfMissing().catch(() => {
           /* no-op */
         });
+        // Sweep any legacy user docs missing `createdAt` so the mobile
+        // profile "Member since …" line renders for accounts that
+        // predate the field. Super-admin only — rules deny the bulk
+        // write for anyone else, so the catch swallows silently.
+        if (u.uid === SUPER_ADMIN_UID) {
+          backfillMissingCreatedAt().catch(() => {
+            /* no-op */
+          });
+        }
       }
     });
     return unsub;

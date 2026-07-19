@@ -55,7 +55,8 @@ export type AuditAction =
   | "reject_store"
   | "revoke_store"
   | "suspend_store"
-  | "reinstate_store";
+  | "reinstate_store"
+  | "backfill_created_at";
 
 export type AuditTargetType =
   | "group"

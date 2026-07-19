@@ -89,6 +89,7 @@ export async function healMyProfileIfMissing(): Promise<boolean> {
     uid: me.uid,
     name: me.displayName ?? me.email?.split("@")[0] ?? "",
     email: (me.email ?? "").toLowerCase(),
+    createdAt: serverTimestamp(),
   });
   return true;
 }
@@ -127,6 +128,30 @@ export async function exitSimulationEnvironment(uid: string): Promise<number> {
 // rules gate the field so no other caller succeeds. Changing the flag does
 // not touch existing memberships — the membership-write rule only checks
 // isTestAccount on future joins, so the two universes stay decoupled.
+// Backfill `createdAt` on every user doc that's missing it. Older test
+// accounts predate the field and the mobile heal only touches the
+// signed-in user's own doc, so a super-admin sweep is the only way to
+// stamp the rest in bulk. Returns how many docs were updated.
+export async function backfillMissingCreatedAt(): Promise<number> {
+  const snap = await getDocs(collection(firestore, "users"));
+  const missing = snap.docs.filter((d) => {
+    const data = d.data() as { createdAt?: unknown };
+    return data.createdAt == null;
+  });
+  if (missing.length === 0) return 0;
+  await Promise.all(
+    missing.map((d) => updateDoc(d.ref, { createdAt: serverTimestamp() })),
+  );
+  await writeAudit({
+    action: "backfill_created_at",
+    targetType: "user",
+    targetId: "*",
+    test: false,
+    after: { count: missing.length },
+  });
+  return missing.length;
+}
+
 export async function setUserIsTestAccount(uid: string, isTestAccount: boolean): Promise<void> {
   await updateDoc(doc(firestore, "users", uid), { isTestAccount });
   await writeAudit({
