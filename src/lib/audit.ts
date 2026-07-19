@@ -58,7 +58,9 @@ export type AuditAction =
   | "reinstate_store"
   | "backfill_created_at"
   | "set_member_role"
-  | "swap_member_positions";
+  | "swap_member_positions"
+  | "kick_member"
+  | "reset_member_payout";
 
 export type AuditTargetType =
   | "group"

@@ -32,6 +32,8 @@ import {
   demoteDefaultedAdmin,
   kickDefaultedAdmin,
   securedPhase,
+  kickMember,
+  resetMemberPayout,
   setGroupStatus,
   setMemberRole,
   subscribeGroup,
@@ -689,6 +691,7 @@ export default function GroupDetailPage() {
           members={members}
           adminUid={group.createdBy}
           useSlots={group.useSlots}
+          currency={group.currency}
         />
       </div>
 
@@ -711,11 +714,13 @@ function MemberList({
   members,
   adminUid,
   useSlots,
+  currency,
 }: {
   groupId: string;
   members: MemberSummary[] | null;
   adminUid: string;
   useSlots: boolean;
+  currency: string;
 }) {
   const [swapSelection, setSwapSelection] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -734,6 +739,63 @@ function MemberList({
       toast.success("Role updated.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not change role.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function triggerKick(m: MemberSummary) {
+    if (useSlots) {
+      toast.error("Kick on split-slot groups lands in PR-1b's slot management.");
+      return;
+    }
+    if (m.payoutCycle != null) {
+      const ok = window.confirm(
+        `${m.name || "This member"} has already received their payout for cycle ${m.payoutCycle}. Kicking now won't return money to the pot — the member keeps what they've already been paid. Continue?`,
+      );
+      if (!ok) return;
+    } else {
+      const ok = window.confirm(
+        `Kick ${m.name || "this member"} from the group? Any active contributions they've recorded will be voided and refunded from the pot to their wallet.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(`kick:${m.userId}`);
+    try {
+      const r = await kickMember(groupId, m.userId);
+      toast.success(
+        r.refundAmount > 0
+          ? `Kicked. Refunded ${currency} ${r.refundAmount.toLocaleString()} across ${r.voidedPayments} voided contribution(s).`
+          : `Kicked. No active contributions to refund.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kick failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function triggerReset(m: MemberSummary) {
+    if (useSlots) {
+      toast.error("Payout reset on split-slot groups lands in PR-1b's slot management.");
+      return;
+    }
+    if (m.payoutCycle == null) {
+      toast.error("This member hasn't been paid out yet — nothing to reset.");
+      return;
+    }
+    const ok = window.confirm(
+      `Reset ${m.name || "this member"}'s payout for cycle ${m.payoutCycle}? The pot will be refunded from their wallet and the payout doc will be voided. Group currentCycle is NOT rolled back — do that from Cycle Correction if needed.`,
+    );
+    if (!ok) return;
+    setBusy(`reset:${m.userId}`);
+    try {
+      const r = await resetMemberPayout(groupId, m.userId);
+      toast.success(
+        `Reset. Reversed ${currency} ${r.reversedAmount.toLocaleString()} across ${r.voidedPayments} payout doc(s).`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reset failed.");
     } finally {
       setBusy(null);
     }
@@ -838,6 +900,24 @@ function MemberList({
                 onClick={() => triggerSwap(m.userId)}
               >
                 {isSelected ? "cancel" : "swap"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy === `reset:${m.userId}` || !paid}
+                onClick={() => triggerReset(m)}
+                title={paid ? "Reset payout (reverse mock money)" : "No payout to reset"}
+              >
+                reset
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={busy === `kick:${m.userId}` || isCreator}
+                onClick={() => triggerKick(m)}
+                title={isCreator ? "Cannot kick the group creator here" : "Kick + refund"}
+              >
+                kick
               </Button>
             </div>
           </div>
