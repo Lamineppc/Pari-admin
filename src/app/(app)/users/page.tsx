@@ -276,17 +276,28 @@ export default function UsersPage() {
                     {location || "—"}
                   </TableCell>
                   <TableCell>
-                    {u.banType === "hard" ? (
-                      <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
-                        Hard ban
-                      </Badge>
-                    ) : u.banType === "soft" ? (
-                      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                        Soft ban
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary">Active</Badge>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {u.banType === "hard" ? (
+                        <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+                          Hard ban
+                        </Badge>
+                      ) : u.banType === "soft" ? (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                          Soft ban
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary">Active</Badge>
+                      )}
+                      {u.escalationFlag && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-300 bg-amber-50 text-[10px] text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                          title={u.escalationReason ?? undefined}
+                        >
+                          ⚠ {u.escalationFlag.replace(/_/g, " ")}
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );

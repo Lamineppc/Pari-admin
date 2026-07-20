@@ -64,6 +64,8 @@ export type AuditAction =
   | "notify_user"
   | "send_support_message"
   | "set_contact_verified"
+  | "flag_user_escalation"
+  | "clear_user_escalation"
   | "set_member_role"
   | "swap_member_positions"
   | "kick_member"

@@ -24,6 +24,11 @@ import { writeAudit } from "./audit";
 
 // Mirrors lib/models/platform_user.dart on mobile.
 export type BanType = "soft" | "hard";
+export type UserEscalationFlag =
+  | "spam_reports"
+  | "fraud_suspected"
+  | "complaint"
+  | "other";
 
 export type PlatformUser = {
   uid: string;
@@ -41,6 +46,9 @@ export type PlatformUser = {
   isTestAccount: boolean;
   createdAt: Date | null;
   lastActiveAt: Date | null;
+  escalationFlag: UserEscalationFlag | null;
+  escalationReason: string | null;
+  escalationFlaggedAt: Date | null;
 };
 
 function toUser(snap: QueryDocumentSnapshot): PlatformUser {
@@ -58,6 +66,11 @@ function toUser(snap: QueryDocumentSnapshot): PlatformUser {
     isTestAccount: (d.isTestAccount as boolean | undefined) ?? false,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
     lastActiveAt: (d.lastActiveAt as Timestamp | undefined)?.toDate() ?? null,
+    escalationFlag:
+      (d.escalationFlag as UserEscalationFlag | undefined) ?? null,
+    escalationReason: (d.escalationReason as string | undefined) ?? null,
+    escalationFlaggedAt:
+      (d.escalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
 
@@ -206,6 +219,11 @@ export function subscribeUser(
         createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
         lastActiveAt:
           (d.lastActiveAt as Timestamp | undefined)?.toDate() ?? null,
+        escalationFlag:
+          (d.escalationFlag as UserEscalationFlag | undefined) ?? null,
+        escalationReason: (d.escalationReason as string | undefined) ?? null,
+        escalationFlaggedAt:
+          (d.escalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
       });
     },
     (err) => onError?.(err),
@@ -429,6 +447,43 @@ export async function updateUserProfile(
     test: false,
     before: { name: beforeData.name ?? null, username: beforeData.username ?? null },
     after: write,
+  });
+}
+
+/// Raise an escalation flag on [uid]. Categorized (spam / fraud /
+/// complaint / other) plus a free-form reason for context. Doesn't
+/// change access or delete anything — pair with soft-ban or notify
+/// as needed. Passing flag=null clears the escalation.
+export async function setUserEscalation(
+  uid: string,
+  flag: UserEscalationFlag | null,
+  reason: string = "",
+): Promise<void> {
+  const ref = doc(firestore, "users", uid);
+  const before = await getDoc(ref);
+  const beforeFlag =
+    (before.data()?.escalationFlag as UserEscalationFlag | undefined) ?? null;
+  if (flag === null) {
+    await updateDoc(ref, {
+      escalationFlag: null,
+      escalationReason: null,
+      escalationFlaggedAt: null,
+    });
+  } else {
+    await updateDoc(ref, {
+      escalationFlag: flag,
+      escalationReason: reason || null,
+      escalationFlaggedAt: serverTimestamp(),
+    });
+  }
+  await writeAudit({
+    action: flag === null ? "clear_user_escalation" : "flag_user_escalation",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    reason: reason || undefined,
+    before: { escalationFlag: beforeFlag },
+    after: { escalationFlag: flag },
   });
 }
 

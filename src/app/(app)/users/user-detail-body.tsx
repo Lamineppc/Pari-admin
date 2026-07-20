@@ -36,6 +36,7 @@ import {
   sendPasswordReset,
   sendSupportMessage,
   setContactVerified,
+  setUserEscalation,
   setUserBan,
   setUserIsTestAccount,
   subscribeSupportMessages,
@@ -47,6 +48,7 @@ import {
   type PlatformUser,
   type SupportMessage,
   type UserContact,
+  type UserEscalationFlag,
   type UserGroupMembership,
   type UserPaymentEntry,
 } from "@/lib/users";
@@ -317,6 +319,14 @@ export function UserDetailBody({
               Test account
             </Badge>
           )}
+          {user.escalationFlag && (
+            <Badge
+              variant="outline"
+              className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+            >
+              ⚠ {user.escalationFlag.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
         <p className="text-sm text-muted-foreground">{user.email}</p>
       </header>
@@ -508,6 +518,13 @@ export function UserDetailBody({
               </>
             )}
           </section>
+        </>
+      )}
+
+      {!isSelf && (
+        <>
+          <Separator />
+          <UserEscalationPanel user={user} />
         </>
       )}
 
@@ -721,6 +738,121 @@ function EditProfileDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function UserEscalationPanel({ user }: { user: PlatformUser }) {
+  const [flag, setFlag] = useState<UserEscalationFlag | "">(
+    user.escalationFlag ?? "",
+  );
+  const [reason, setReason] = useState(user.escalationReason ?? "");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setFlag(user.escalationFlag ?? "");
+    setReason(user.escalationReason ?? "");
+  }, [user.escalationFlag, user.escalationReason]);
+
+  async function apply() {
+    setBusy(true);
+    try {
+      await setUserEscalation(
+        user.uid,
+        flag === "" ? null : (flag as UserEscalationFlag),
+        reason,
+      );
+      toast.success(
+        flag === "" ? "Escalation cleared." : "Escalation flag applied.",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearFlag() {
+    setBusy(true);
+    try {
+      await setUserEscalation(user.uid, null);
+      setFlag("");
+      setReason("");
+      toast.success("Escalation cleared.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Clear failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Escalation
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Raise a flag when this account needs attention (spam reports, fraud
+        suspected, complaint received). Does not restrict access — pair with
+        soft-ban or a notify as needed.
+      </p>
+      {user.escalationFlaggedAt && (
+        <p className="text-[11px] text-amber-700">
+          Flagged {user.escalationFlaggedAt.toLocaleString()}
+        </p>
+      )}
+      <div className="flex max-w-md flex-col gap-2 text-sm">
+        <div className="flex items-center gap-2">
+          <label className="w-20 text-xs text-muted-foreground">Kind</label>
+          <select
+            value={flag}
+            onChange={(e) =>
+              setFlag(e.target.value as UserEscalationFlag | "")
+            }
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+          >
+            <option value="">— none —</option>
+            <option value="spam_reports">spam_reports</option>
+            <option value="fraud_suspected">fraud_suspected</option>
+            <option value="complaint">complaint</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div className="flex items-start gap-2">
+          <label className="w-20 pt-1 text-xs text-muted-foreground">
+            Reason
+          </label>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            placeholder="Context — where this came from, what to check."
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            className="w-fit"
+            disabled={busy || flag === ""}
+            onClick={apply}
+          >
+            {busy ? "Saving…" : user.escalationFlag ? "Update flag" : "Raise flag"}{" "}
+            <ChevronRight />
+          </Button>
+          {user.escalationFlag && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-fit"
+              disabled={busy}
+              onClick={clearFlag}
+            >
+              Clear flag <ChevronRight />
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
