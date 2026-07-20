@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Beaker, Flag, History, ShieldOff, Store, Users, UsersRound } from "lucide-react";
+import { AlertTriangle, Beaker, Flag, History, ShieldOff, Sparkles, Store, Users, UsersRound } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
@@ -43,11 +43,26 @@ export default function DashboardPage() {
   const userCount = users?.length;
   const userStats = useMemo(() => {
     if (!users) return null;
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
     return {
       escalated: users.filter((u) => u.escalationFlag !== null).length,
       banned: users.filter((u) => u.banType !== null).length,
       test: users.filter((u) => u.isTestAccount).length,
+      new24h: users.filter(
+        (u) => u.createdAt && now - u.createdAt.getTime() < dayMs,
+      ).length,
     };
+  }, [users]);
+
+  const recentSignups = useMemo(() => {
+    if (!users) return null;
+    return [...users]
+      .filter((u) => u.createdAt)
+      .sort(
+        (a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0),
+      )
+      .slice(0, 5);
   }, [users]);
   const pendingStores = stores?.filter((s) => s.status === "pending").length;
 
@@ -92,7 +107,14 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="New in 24h"
+          value={userStats?.new24h}
+          icon={Sparkles}
+          tone="text-emerald-600"
+          description="Signups landed in the last 24 hours."
+        />
         <StatCard
           title="Escalated users"
           value={userStats?.escalated}
@@ -120,8 +142,60 @@ export default function DashboardPage() {
         />
       </div>
 
-      <RecentActivityCard entries={audit} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RecentActivityCard entries={audit} />
+        <RecentSignupsCard users={recentSignups} />
+      </div>
     </div>
+  );
+}
+
+function RecentSignupsCard({
+  users,
+}: {
+  users: PlatformUser[] | null;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">Recent signups</CardTitle>
+        <Sparkles className="h-4 w-4 text-emerald-600" />
+      </CardHeader>
+      <CardContent>
+        {users === null && <Skeleton className="h-24 w-full" />}
+        {users && users.length === 0 && (
+          <CardDescription>No signups recorded yet.</CardDescription>
+        )}
+        {users && users.length > 0 && (
+          <div className="flex flex-col divide-y">
+            {users.map((u) => (
+              <Link
+                key={u.uid}
+                href={`/users/${u.uid}`}
+                className="flex flex-wrap items-center gap-2 rounded-md px-1 py-2 text-xs hover:bg-muted/40"
+              >
+                <span className="flex-1 truncate font-medium">
+                  {u.name || u.email || u.uid.slice(0, 10)}
+                </span>
+                {u.isTestAccount && (
+                  <span className="rounded bg-purple-100 px-1 text-[10px] text-purple-800 dark:bg-purple-950 dark:text-purple-200">
+                    test
+                  </span>
+                )}
+                {u.createdAt && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {u.createdAt.toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </span>
+                )}
+              </Link>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
