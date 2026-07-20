@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { writeAudit } from "@/lib/audit";
+import { subscribeAuditLog, writeAudit, type AuditEntry } from "@/lib/audit";
 import {
   mockPaymentProvider,
   userWalletId,
@@ -84,6 +84,16 @@ export function UserDetailBody({
   const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
   const [contact, setContact] = useState<UserContact | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeAuditLog(
+      (entries) => setAudit(entries),
+      { targetId: user.uid, max: 40 },
+      () => setAudit([]),
+    );
+    return unsub;
+  }, [user.uid]);
 
   useEffect(() => {
     const unsub = subscribeUserContact(
@@ -507,6 +517,9 @@ export function UserDetailBody({
       <Separator />
       <UserPaymentsPanel payments={payments} />
 
+      <Separator />
+      <UserAuditPanel entries={audit} />
+
       {user.isTestAccount && (
         <>
           <Separator />
@@ -923,6 +936,56 @@ function UserPaymentsPanel({
               </Link>
             );
           })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UserAuditPanel({ entries }: { entries: AuditEntry[] | null }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Audit trail ({entries?.length ?? "…"})
+      </div>
+      {entries === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {entries && entries.length === 0 && (
+        <div className="text-xs text-muted-foreground">
+          No super-admin actions recorded for this user.
+        </div>
+      )}
+      {entries && entries.length > 0 && (
+        <div className="flex max-h-72 flex-col gap-1 overflow-auto">
+          {entries.map((e) => (
+            <div
+              key={e.id}
+              className="flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-xs"
+            >
+              <Badge variant="outline" className="text-[10px] uppercase">
+                {e.action.replace(/_/g, " ")}
+              </Badge>
+              {e.reason && (
+                <span className="flex-1 truncate italic text-muted-foreground">
+                  {e.reason}
+                </span>
+              )}
+              {!e.reason && (
+                <span className="flex-1 truncate text-muted-foreground">
+                  {e.actorUid ? `by ${e.actorUid.slice(0, 8)}…` : ""}
+                </span>
+              )}
+              {e.createdAt && (
+                <span className="text-[10px] text-muted-foreground">
+                  {e.createdAt.toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </span>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </section>

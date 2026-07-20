@@ -200,6 +200,8 @@ export function subscribeAuditLog(
     hideTest?: boolean;
     hidePrelaunch?: boolean;
     action?: AuditAction;
+    targetId?: string;
+    targetType?: "group" | "user" | "store" | "wallet" | "cycle" | "platform";
   } = {},
   onError?: (e: Error) => void,
 ) {
@@ -207,6 +209,9 @@ export function subscribeAuditLog(
   if (options.hideTest) filters.push(where("test", "==", false));
   if (options.hidePrelaunch) filters.push(where("phase", "==", "live"));
   if (options.action) filters.push(where("action", "==", options.action));
+  if (options.targetId) filters.push(where("targetId", "==", options.targetId));
+  if (options.targetType)
+    filters.push(where("targetType", "==", options.targetType));
 
   const q = query(
     collection(firestore, COLLECTION),
