@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
   Download,
+  Flag,
+  FlagOff,
   LogOut,
   Search,
   ShieldAlert,
@@ -31,8 +33,10 @@ import {
   forceSignOutUser,
   notifyUser,
   setUserBan,
+  setUserEscalation,
   subscribeUsers,
   type PlatformUser,
+  type UserEscalationFlag,
 } from "@/lib/users";
 import { useAuth } from "@/lib/auth-context";
 import { BulkActionBar } from "@/components/bulk-action-bar";
@@ -52,6 +56,7 @@ export default function UsersPage() {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
+  const [escalateOpen, setEscalateOpen] = useState(false);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -270,6 +275,65 @@ export default function UsersPage() {
     setCheckedIds(new Set());
     toast.success(
       `Signed out ${ok} user(s)${failed > 0 ? `, ${failed} failed` : ""}.`,
+    );
+  }
+
+  async function runBulkEscalate(flag: UserEscalationFlag, reason: string) {
+    const targets = Array.from(checkedIds).filter(
+      (uid) => uid !== authUser?.uid,
+    );
+    if (targets.length === 0) {
+      toast.error("Nothing to flag — self-selection is skipped.");
+      return;
+    }
+    setBusy(true);
+    let ok = 0;
+    let failed = 0;
+    await Promise.all(
+      targets.map(async (uid) => {
+        try {
+          await setUserEscalation(uid, flag, reason);
+          ok += 1;
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+    setBusy(false);
+    setCheckedIds(new Set());
+    setEscalateOpen(false);
+    toast.success(
+      `Flagged ${ok} user(s)${failed > 0 ? `, ${failed} failed` : ""}.`,
+    );
+  }
+
+  async function runBulkClearEscalation() {
+    const targets = Array.from(checkedIds).filter(
+      (uid) => uid !== authUser?.uid,
+    );
+    if (targets.length === 0) {
+      toast.error("Nothing to clear — self-selection is skipped.");
+      return;
+    }
+    if (!window.confirm(`Clear escalation on ${targets.length} user(s)?`))
+      return;
+    setBusy(true);
+    let ok = 0;
+    let failed = 0;
+    await Promise.all(
+      targets.map(async (uid) => {
+        try {
+          await setUserEscalation(uid, null);
+          ok += 1;
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+    setBusy(false);
+    setCheckedIds(new Set());
+    toast.success(
+      `Cleared ${ok} escalation(s)${failed > 0 ? `, ${failed} failed` : ""}.`,
     );
   }
 
@@ -539,8 +603,34 @@ export default function UsersPage() {
         >
           <LogOut /> Force sign-out
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => setEscalateOpen(true)}
+        >
+          <Flag /> Escalate
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={runBulkClearEscalation}
+        >
+          <FlagOff /> Clear escalation
+        </Button>
       </BulkActionBar>
 
+      {escalateOpen && (
+        <BulkEscalateDialog
+          count={
+            Array.from(checkedIds).filter((uid) => uid !== authUser?.uid).length
+          }
+          busy={busy}
+          onSend={runBulkEscalate}
+          onClose={() => setEscalateOpen(false)}
+        />
+      )}
       {notifyOpen && (
         <BulkNotifyDialog
           count={
@@ -551,6 +641,81 @@ export default function UsersPage() {
           busy={busy}
         />
       )}
+    </div>
+  );
+}
+
+function BulkEscalateDialog({
+  count,
+  busy,
+  onSend,
+  onClose,
+}: {
+  count: number;
+  busy: boolean;
+  onSend: (flag: UserEscalationFlag, reason: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [flag, setFlag] = useState<UserEscalationFlag>("complaint");
+  const [reason, setReason] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Flag {count} user(s)</h3>
+            <p className="text-xs text-muted-foreground">
+              Raises the escalation flag on each. Doesn&apos;t restrict access —
+              pair with soft-ban if needed.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-16 text-xs text-muted-foreground">Kind</label>
+            <select
+              value={flag}
+              onChange={(e) =>
+                setFlag(e.target.value as UserEscalationFlag)
+              }
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="spam_reports">spam_reports</option>
+              <option value="fraud_suspected">fraud_suspected</option>
+              <option value="complaint">complaint</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <div className="flex items-start gap-2">
+            <label className="w-16 pt-1 text-xs text-muted-foreground">
+              Reason
+            </label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              placeholder="Context recorded on each flagged account."
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => onSend(flag, reason)}
+          >
+            {busy ? "Flagging…" : "Flag"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
