@@ -2,6 +2,7 @@ import {
   addDoc,
   arrayRemove,
   collection,
+  collectionGroup,
   deleteDoc,
   getDoc,
   getDocs,
@@ -10,6 +11,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   doc,
@@ -61,6 +63,112 @@ export function subscribeUsers(cb: (users: PlatformUser[]) => void, onError?: (e
   return onSnapshot(
     q,
     (s) => cb(s.docs.map(toUser)),
+    (err) => onError?.(err),
+  );
+}
+
+// ── Per-user activity streams (for the /users/[uid] detail page) ──────────
+
+export type UserGroupMembership = {
+  groupId: string;
+  groupName: string;
+  role: "admin" | "manager" | "member";
+  position: number;
+  joinCycle: number;
+  payoutCycle: number | null;
+  kicked: boolean;
+};
+
+/// Live stream of every group [uid] belongs to. Uses the groups doc's
+/// `memberIds` array (indexed for array-contains) then reads each
+/// group's member subdoc for role/position. Not paginated — the
+/// panel expects roster sizes in the low hundreds max.
+export function subscribeUserGroups(
+  uid: string,
+  cb: (rows: UserGroupMembership[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups"),
+    where("memberIds", "array-contains", uid),
+  );
+  return onSnapshot(
+    q,
+    async (snap) => {
+      const rows = await Promise.all(
+        snap.docs.map(async (g) => {
+          const memberSnap = await getDoc(doc(g.ref, "members", uid));
+          const m = memberSnap.data() ?? {};
+          const groupName = String(g.data().name ?? g.id);
+          return {
+            groupId: g.id,
+            groupName,
+            role: (m.role as UserGroupMembership["role"] | undefined) ?? "member",
+            position: Number(m.position ?? 0),
+            joinCycle: Number(m.joinCycle ?? 1),
+            payoutCycle:
+              typeof m.payoutCycle === "number" ? m.payoutCycle : null,
+            kicked: m.kicked === true,
+          };
+        }),
+      );
+      rows.sort((a, b) => a.groupName.localeCompare(b.groupName));
+      cb(rows);
+    },
+    (err) => onError?.(err),
+  );
+}
+
+export type UserPaymentEntry = {
+  id: string;
+  groupId: string;
+  cycleNumber: number;
+  amount: number;
+  currency: string;
+  type: "contribution" | "payout";
+  status: string | null;
+  paidAt: Date | null;
+  isLate: boolean;
+};
+
+/// Live stream of every payment doc where userId equals [uid], across
+/// every group. Uses a collectionGroup query — requires the
+/// `payments` collectionGroup index on (userId, paidAt desc), which
+/// Firestore prompts to create on first run.
+export function subscribeUserPayments(
+  uid: string,
+  cb: (rows: UserPaymentEntry[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collectionGroup(firestore, "payments"),
+    where("userId", "==", uid),
+    orderBy("paidAt", "desc"),
+  );
+  return onSnapshot(
+    q,
+    (snap) =>
+      cb(
+        snap.docs.map((d) => {
+          const data = d.data();
+          // parent chain: payments -> {paymentId} ; parent of payments
+          // collection is the group doc.
+          const groupId = d.ref.parent.parent?.id ?? "";
+          return {
+            id: d.id,
+            groupId,
+            cycleNumber: Number(data.cycleNumber ?? 0),
+            amount: Number(data.amount ?? 0),
+            currency: String(data.currency ?? "CFA"),
+            type:
+              (data.type as "contribution" | "payout" | undefined) ??
+              "contribution",
+            status: (data.status as string | undefined) ?? null,
+            paidAt: (data.paidAt as Timestamp | undefined)?.toDate() ?? null,
+            isLate: data.isLate === true,
+          };
+        }),
+      ),
     (err) => onError?.(err),
   );
 }

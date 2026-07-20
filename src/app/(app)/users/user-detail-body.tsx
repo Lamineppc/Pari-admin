@@ -30,9 +30,14 @@ import {
   hardDeleteUser,
   setUserBan,
   setUserIsTestAccount,
+  subscribeUserGroups,
+  subscribeUserPayments,
   type BanType,
   type PlatformUser,
+  type UserGroupMembership,
+  type UserPaymentEntry,
 } from "@/lib/users";
+import Link from "next/link";
 
 /// Full-page super-admin controls for a single user. Rendered by
 /// /users/[uid]/page.tsx; not a modal — mirrors how the groups detail
@@ -63,6 +68,20 @@ export function UserDetailBody({
   >(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
+  const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
+  const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeUserGroups(user.uid, setGroups, () => setGroups([]));
+    return unsub;
+  }, [user.uid]);
+
+  useEffect(() => {
+    const unsub = subscribeUserPayments(user.uid, setPayments, () =>
+      setPayments([]),
+    );
+    return unsub;
+  }, [user.uid]);
 
   useEffect(() => {
     setReason("");
@@ -402,6 +421,12 @@ export function UserDetailBody({
         </>
       )}
 
+      <Separator />
+      <UserGroupsPanel groups={groups} />
+
+      <Separator />
+      <UserPaymentsPanel payments={payments} />
+
       {user.isTestAccount && (
         <>
           <Separator />
@@ -449,6 +474,130 @@ export function UserDetailBody({
         </>
       )}
     </div>
+  );
+}
+
+function UserGroupsPanel({ groups }: { groups: UserGroupMembership[] | null }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Group memberships ({groups?.length ?? "…"})
+      </div>
+      {groups === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {groups && groups.length === 0 && (
+        <div className="text-xs text-muted-foreground">
+          Not a member of any group.
+        </div>
+      )}
+      {groups && groups.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {groups.map((g) => (
+            <Link
+              key={g.groupId}
+              href={`/groups/${g.groupId}`}
+              className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
+            >
+              <span className="flex-1 truncate font-medium">{g.groupName}</span>
+              <Badge variant="outline" className="text-[10px] uppercase">
+                {g.role}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                #{g.position} · joined c{g.joinCycle}
+              </span>
+              {g.payoutCycle != null && (
+                <Badge variant="secondary" className="text-[10px]">
+                  paid c{g.payoutCycle}
+                </Badge>
+              )}
+              {g.kicked && (
+                <Badge variant="destructive" className="text-[10px]">
+                  kicked
+                </Badge>
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UserPaymentsPanel({
+  payments,
+}: {
+  payments: UserPaymentEntry[] | null;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Payment activity ({payments?.length ?? "…"})
+      </div>
+      {payments === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {payments && payments.length === 0 && (
+        <div className="text-xs text-muted-foreground">
+          No contributions or payouts recorded for this user.
+        </div>
+      )}
+      {payments && payments.length > 0 && (
+        <div className="flex max-h-96 flex-col gap-1 overflow-auto">
+          {payments.map((p) => {
+            const voided = p.status === "voided";
+            return (
+              <Link
+                key={p.id}
+                href={`/groups/${p.groupId}`}
+                className={
+                  "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-xs hover:bg-muted/50 " +
+                  (voided ? "opacity-60 line-through" : "")
+                }
+              >
+                <span className="font-mono text-muted-foreground">
+                  c{p.cycleNumber}
+                </span>
+                <span
+                  className={
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold " +
+                    (p.type === "payout"
+                      ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                      : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200")
+                  }
+                >
+                  {p.type}
+                </span>
+                <span className="flex-1 truncate font-mono text-[10px]">
+                  group {p.groupId.slice(0, 8)}…
+                </span>
+                {p.isLate && (
+                  <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    late
+                  </span>
+                )}
+                {voided && (
+                  <span className="rounded bg-red-100 px-1 text-[10px] text-red-800 dark:bg-red-950 dark:text-red-200">
+                    voided
+                  </span>
+                )}
+                <span className="font-mono">
+                  {p.currency} {p.amount.toLocaleString()}
+                </span>
+                {p.paidAt && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {p.paidAt.toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
