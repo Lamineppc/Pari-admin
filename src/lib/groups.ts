@@ -147,6 +147,163 @@ export async function setGroupStatus(groupId: string, status: GroupStatus) {
   });
 }
 
+/// Set the group's `currentCycle` field to an arbitrary value. Used to
+/// unblock rotations stuck on a bad cycle counter after data
+/// corruption or manual DB edits. Doesn't touch payment docs — pair
+/// with Cycle Correction if the cycles being skipped/rewound also
+/// need their contribs voided.
+export async function setGroupCurrentCycle(
+  groupId: string,
+  cycle: number,
+): Promise<void> {
+  if (!Number.isFinite(cycle) || cycle < 0) {
+    throw new Error("Cycle must be a non-negative integer.");
+  }
+  const ref = doc(firestore, "groups", groupId);
+  const before = await getDoc(ref);
+  const beforeCycle = (before.data()?.currentCycle as number | null) ?? null;
+  await updateDoc(ref, { currentCycle: cycle });
+  await writeAudit({
+    action: "set_group_current_cycle",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: { currentCycle: beforeCycle },
+    after: { currentCycle: cycle },
+  });
+}
+
+/// Flip `positionsLocked`. Unlocking lets admins reshuffle positions
+/// after a rotation has already started; re-locking closes the door.
+/// Standalone from the mobile "READY" flow so super-admin can fix
+/// stuck onboarding without pretending to be the group admin.
+export async function setPositionsLocked(
+  groupId: string,
+  locked: boolean,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId);
+  const before = await getDoc(ref);
+  const beforeLocked = Boolean(before.data()?.positionsLocked ?? false);
+  await updateDoc(ref, { positionsLocked: locked });
+  await writeAudit({
+    action: "set_positions_locked",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: { positionsLocked: beforeLocked },
+    after: { positionsLocked: locked },
+  });
+}
+
+/// Re-numbers member positions to a contiguous 1..N sequence based on
+/// current sort order (position asc, then joinCycle, then userId).
+/// Fixes duplicate or gapped position values that can appear after
+/// manual DB edits or interrupted swaps. Not slot-aware — useSlots
+/// groups track position on slot docs.
+export async function resyncMemberPositions(
+  groupId: string,
+): Promise<{ updated: number }> {
+  const membersCol = collection(firestore, "groups", groupId, "members");
+  const snap = await getDocs(membersCol);
+  const docs = snap.docs
+    .slice()
+    .sort((a, b) => {
+      const pa = Number(a.data().position ?? 0);
+      const pb = Number(b.data().position ?? 0);
+      if (pa !== pb) return pa - pb;
+      const ja = Number(a.data().joinCycle ?? 1);
+      const jb = Number(b.data().joinCycle ?? 1);
+      if (ja !== jb) return ja - jb;
+      return a.id.localeCompare(b.id);
+    });
+  const batch = writeBatch(firestore);
+  let updated = 0;
+  docs.forEach((d, i) => {
+    const target = i + 1;
+    if (Number(d.data().position ?? 0) !== target) {
+      batch.update(d.ref, { position: target });
+      updated++;
+    }
+  });
+  if (updated > 0) await batch.commit();
+  await writeAudit({
+    action: "resync_member_positions",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { updated, total: docs.length },
+  });
+  return { updated };
+}
+
+/// Heal missing slots on a useSlots group: for every member without a
+/// corresponding slot in `owners`, add a solo slot at the tail so the
+/// rotation is complete again. Mirrors the mobile `healSlotsIfNeeded`.
+/// No-op on non-useSlots groups.
+export async function healMissingSlots(
+  groupId: string,
+): Promise<{ added: number }> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.useSlots !== true) return { added: 0 };
+
+  const membersSnap = await getDocs(
+    collection(firestore, "groups", groupId, "members"),
+  );
+  const slotsSnap = await getDocs(
+    collection(firestore, "groups", groupId, "slots"),
+  );
+  const owned = new Set<string>();
+  for (const s of slotsSnap.docs) {
+    const owners = (s.data().owners as { userId?: string }[] | undefined) ?? [];
+    for (const o of owners) if (o.userId) owned.add(o.userId);
+  }
+  const missing = membersSnap.docs.filter(
+    (m) => !owned.has(m.id) && m.data().kicked !== true,
+  );
+  if (missing.length === 0) return { added: 0 };
+
+  // Non-creator orphans first so the group creator lands at the tail
+  // — same convention the mobile heal uses.
+  const creator = g.createdBy as string | undefined;
+  missing.sort((a, b) => {
+    if (a.id === creator) return 1;
+    if (b.id === creator) return -1;
+    return a.id.localeCompare(b.id);
+  });
+  const nextPosition = slotsSnap.docs.length + 1;
+  const currentCycle = Number(g.currentCycle ?? 1);
+  const batch = writeBatch(firestore);
+  const slotsCol = collection(firestore, "groups", groupId, "slots");
+  missing.forEach((m, i) => {
+    const slotRef = doc(slotsCol);
+    const memberData = m.data();
+    batch.set(slotRef, {
+      position: nextPosition + i,
+      joinCycle: currentCycle,
+      owners: [
+        {
+          userId: m.id,
+          name: memberData.name ?? "",
+          share: 1.0,
+        },
+      ],
+      payoutCycle: null,
+      pendingSecondary: null,
+    });
+  });
+  await batch.commit();
+  await writeAudit({
+    action: "heal_missing_slots",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { added: missing.length },
+  });
+  return { added: missing.length };
+}
+
 // Half-cycle boundary (floor(N/2)). Mirrors GroupModel.halfwayCycle.
 export function halfwayCycle(g: Pick<Group, "memberCount">): number {
   return Math.floor(g.memberCount / 2);

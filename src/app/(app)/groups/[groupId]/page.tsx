@@ -32,10 +32,14 @@ import {
   demoteDefaultedAdmin,
   kickDefaultedAdmin,
   securedPhase,
+  healMissingSlots,
   kickMember,
   recordContributionAsSuperAdmin,
   recordPayoutAsSuperAdmin,
   resetMemberPayout,
+  resyncMemberPositions,
+  setGroupCurrentCycle,
+  setPositionsLocked,
   setGroupStatus,
   setMemberRole,
   subscribeGroup,
@@ -684,6 +688,15 @@ export default function GroupDetailPage() {
 
       <Separator />
 
+      <SetupPanel
+        groupId={group.id}
+        useSlots={group.useSlots}
+        currentCycle={group.currentCycle ?? 0}
+        positionsLocked={group.positionsLocked}
+      />
+
+      <Separator />
+
       <div className="flex flex-col gap-2">
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Members ({members?.length ?? "…"})
@@ -706,6 +719,129 @@ export default function GroupDetailPage() {
           Recent ledger
         </div>
         <LedgerList entries={ledger} currency={group.currency} />
+      </div>
+    </div>
+  );
+}
+
+// ── Setup healing panel ────────────────────────────────────────────────────
+
+function SetupPanel({
+  groupId,
+  useSlots,
+  currentCycle,
+  positionsLocked,
+}: {
+  groupId: string;
+  useSlots: boolean;
+  currentCycle: number;
+  positionsLocked: boolean;
+}) {
+  const [cycleInput, setCycleInput] = useState<number>(currentCycle);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCycleInput(currentCycle);
+  }, [currentCycle]);
+
+  async function run<T>(key: string, fn: () => Promise<T>, ok: (r: T) => string) {
+    setBusy(key);
+    try {
+      const r = await fn();
+      toast.success(ok(r));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `${key} failed.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Setup healing
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="flex items-center gap-2 rounded-md border p-2 text-sm">
+          <span className="w-28 text-xs text-muted-foreground">Current cycle</span>
+          <input
+            type="number"
+            min={0}
+            value={cycleInput}
+            onChange={(e) => setCycleInput(Number(e.target.value))}
+            className="w-20 rounded-md border bg-background px-2 py-1 text-sm"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy === "cycle" || cycleInput === currentCycle}
+            onClick={() =>
+              run(
+                "cycle",
+                () => setGroupCurrentCycle(groupId, cycleInput),
+                () => `currentCycle set to ${cycleInput}.`,
+              )
+            }
+          >
+            set
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border p-2 text-sm">
+          <span className="flex-1 text-xs text-muted-foreground">
+            Positions {positionsLocked ? "locked" : "unlocked"}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy === "lock"}
+            onClick={() =>
+              run(
+                "lock",
+                () => setPositionsLocked(groupId, !positionsLocked),
+                () =>
+                  positionsLocked ? "Positions unlocked." : "Positions locked.",
+              )
+            }
+          >
+            {positionsLocked ? "unlock" : "lock"}
+          </Button>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy === "resync"}
+          onClick={() =>
+            run(
+              "resync",
+              () => resyncMemberPositions(groupId),
+              (r) =>
+                r.updated === 0
+                  ? "Positions already contiguous."
+                  : `Renumbered ${r.updated} member position(s).`,
+            )
+          }
+        >
+          Resync member positions
+        </Button>
+        {useSlots && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy === "heal"}
+            onClick={() =>
+              run(
+                "heal",
+                () => healMissingSlots(groupId),
+                (r) =>
+                  r.added === 0
+                    ? "No missing slots."
+                    : `Added ${r.added} missing slot(s).`,
+              )
+            }
+          >
+            Heal missing slots
+          </Button>
+        )}
       </div>
     </div>
   );

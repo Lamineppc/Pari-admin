@@ -62,7 +62,11 @@ export type AuditAction =
   | "kick_member"
   | "reset_member_payout"
   | "super_admin_record_contribution"
-  | "super_admin_record_payout";
+  | "super_admin_record_payout"
+  | "set_group_current_cycle"
+  | "set_positions_locked"
+  | "resync_member_positions"
+  | "heal_missing_slots";
 
 export type AuditTargetType =
   | "group"
