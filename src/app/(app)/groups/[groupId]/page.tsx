@@ -33,6 +33,8 @@ import {
   kickDefaultedAdmin,
   securedPhase,
   kickMember,
+  recordContributionAsSuperAdmin,
+  recordPayoutAsSuperAdmin,
   resetMemberPayout,
   setGroupStatus,
   setMemberRole,
@@ -692,6 +694,8 @@ export default function GroupDetailPage() {
           adminUid={group.createdBy}
           useSlots={group.useSlots}
           currency={group.currency}
+          currentCycle={group.currentCycle ?? 1}
+          defaultAmount={group.amount ?? 0}
         />
       </div>
 
@@ -715,15 +719,20 @@ function MemberList({
   adminUid,
   useSlots,
   currency,
+  currentCycle,
+  defaultAmount,
 }: {
   groupId: string;
   members: MemberSummary[] | null;
   adminUid: string;
   useSlots: boolean;
   currency: string;
+  currentCycle: number;
+  defaultAmount: number;
 }) {
   const [swapSelection, setSwapSelection] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [recordFor, setRecordFor] = useState<MemberSummary | null>(null);
 
   if (members === null) {
     return <Skeleton className="h-24 w-full" />;
@@ -924,6 +933,14 @@ function MemberList({
                 reset
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRecordFor(m)}
+                title="Record a contribution or payout on this member's behalf"
+              >
+                record
+              </Button>
+              <Button
                 variant="destructive"
                 size="sm"
                 disabled={busy === `kick:${m.userId}` || isCreator}
@@ -941,6 +958,190 @@ function MemberList({
           Pick the target member to complete the swap, or press cancel.
         </div>
       )}
+      {recordFor && (
+        <RecordPaymentDialog
+          member={recordFor}
+          groupId={groupId}
+          useSlots={useSlots}
+          currency={currency}
+          currentCycle={currentCycle}
+          defaultAmount={defaultAmount}
+          onClose={() => setRecordFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function RecordPaymentDialog({
+  member,
+  groupId,
+  useSlots,
+  currency,
+  currentCycle,
+  defaultAmount,
+  onClose,
+}: {
+  member: MemberSummary;
+  groupId: string;
+  useSlots: boolean;
+  currency: string;
+  currentCycle: number;
+  defaultAmount: number;
+  onClose: () => void;
+}) {
+  const [type, setType] = useState<"contribution" | "payout">("contribution");
+  const [cycle, setCycle] = useState<number>(currentCycle);
+  const [amount, setAmount] = useState<number>(defaultAmount);
+  const [isLate, setIsLate] = useState(false);
+  const [penalty, setPenalty] = useState<number>(0);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (useSlots) {
+      toast.error(
+        "Direct record on split-slot groups lands with slot management.",
+      );
+      return;
+    }
+    if (amount <= 0 || cycle <= 0) {
+      toast.error("Enter a positive cycle and amount.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (type === "contribution") {
+        await recordContributionAsSuperAdmin({
+          groupId,
+          userId: member.userId,
+          userName: member.name || member.userId.slice(0, 6),
+          cycleNumber: cycle,
+          amount,
+          isLate,
+          penaltyAmount: penalty,
+          note: note.trim() || undefined,
+        });
+      } else {
+        await recordPayoutAsSuperAdmin({
+          groupId,
+          userId: member.userId,
+          userName: member.name || member.userId.slice(0, 6),
+          cycleNumber: cycle,
+          amount,
+          note: note.trim() || undefined,
+        });
+      }
+      toast.success(
+        `Recorded ${type} of ${currency} ${amount.toLocaleString()} for cycle ${cycle}.`,
+      );
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Record failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">
+              Record for {member.name || member.userId.slice(0, 6)}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Super-admin write path. Mock money moves accordingly; real-money
+              groups will throw.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as typeof type)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="contribution">contribution</option>
+              <option value="payout">payout</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Cycle #</label>
+            <input
+              type="number"
+              min={1}
+              value={cycle}
+              onChange={(e) => setCycle(Number(e.target.value))}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">
+              Amount ({currency})
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={amount}
+              onChange={(e) => setAmount(Number(e.target.value))}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          {type === "contribution" && (
+            <>
+              <div className="flex items-center gap-2">
+                <label className="w-24 text-xs text-muted-foreground">Late?</label>
+                <Checkbox
+                  checked={isLate}
+                  onCheckedChange={(v) => setIsLate(v === true)}
+                />
+                <span className="text-xs text-muted-foreground">
+                  Flags the contribution as late (isLate=true).
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="w-24 text-xs text-muted-foreground">
+                  Penalty ({currency})
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={penalty}
+                  onChange={(e) => setPenalty(Number(e.target.value))}
+                  className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+                />
+              </div>
+            </>
+          )}
+          <div className="flex items-start gap-2">
+            <label className="w-24 pt-1 text-xs text-muted-foreground">Note</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              placeholder="Why this manual record?"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Recording…" : "Record"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -60,7 +60,9 @@ export type AuditAction =
   | "set_member_role"
   | "swap_member_positions"
   | "kick_member"
-  | "reset_member_payout";
+  | "reset_member_payout"
+  | "super_admin_record_contribution"
+  | "super_admin_record_payout";
 
 export type AuditTargetType =
   | "group"

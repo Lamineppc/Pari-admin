@@ -833,6 +833,200 @@ export async function resetMemberPayout(
   };
 }
 
+/// Super-admin direct-record of a contribution on behalf of a member.
+/// Mirrors the mobile `recordContribution` flow (payment doc + ledger
+/// entry + optional mock money transfer) but with the super-admin as
+/// recordedBy and no client-side deadline/isLate inference — the
+/// caller passes `isLate` and `penaltyAmount` explicitly.
+///
+/// Legacy (non-useSlots) groups only for now. Split-slot recording
+/// lands with the slot-management PR.
+export async function recordContributionAsSuperAdmin(args: {
+  groupId: string;
+  userId: string;
+  userName: string;
+  cycleNumber: number;
+  amount: number;
+  isLate: boolean;
+  penaltyAmount: number;
+  note?: string;
+}): Promise<void> {
+  const {
+    groupId,
+    userId,
+    userName,
+    cycleNumber,
+    amount,
+    isLate,
+    penaltyAmount,
+    note,
+  } = args;
+  if (amount <= 0) throw new Error("Amount must be positive.");
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.useSlots === true) {
+    throw new Error(
+      "Direct record on split-slot groups lands with the slot-management PR.",
+    );
+  }
+  const currency = String(g.currency ?? "CFA");
+  const isMock = String(g.moneyProvider ?? "") === "mock";
+  const paymentRef = doc(
+    collection(firestore, "groups", groupId, "payments"),
+    `${userId}_c${cycleNumber}`,
+  );
+  const existing = await getDoc(paymentRef);
+  if (existing.exists() && (existing.data()?.status as string) !== "voided") {
+    throw new Error(`Contribution already recorded for cycle ${cycleNumber}.`);
+  }
+  if (isMock) {
+    await mockPaymentProvider.transfer({
+      fromWalletId: userWalletId(userId),
+      toWalletId: groupPotId(groupId),
+      amount,
+      purpose: "contribution",
+      groupId,
+      cycleNumber,
+    });
+  }
+  const batch = writeBatch(firestore);
+  batch.set(paymentRef, {
+    cycleNumber,
+    userId,
+    userName,
+    amount,
+    currency,
+    type: "contribution",
+    paidAt: serverTimestamp(),
+    recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+    status: "active",
+    ...(note ? { note } : {}),
+    ...(isLate ? { isLate: true } : {}),
+    ...(penaltyAmount > 0 ? { penaltyAmount } : {}),
+  });
+  const baseAmount = penaltyAmount > 0 ? amount - penaltyAmount : amount;
+  const nowMicros = Date.now() * 1000;
+  const contribLedger = doc(
+    collection(firestore, "groups", groupId, "ledger"),
+    `contribution_${userId}_c${cycleNumber}_a${nowMicros}`,
+  );
+  batch.set(contribLedger, {
+    kind: "contribution",
+    userId,
+    amount: baseAmount,
+    currency,
+    cycleNumber,
+    recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+    createdAt: serverTimestamp(),
+    paymentId: paymentRef.id,
+    ...(note ? { note } : {}),
+  });
+  if (penaltyAmount > 0) {
+    const penaltyLedger = doc(
+      collection(firestore, "groups", groupId, "ledger"),
+      `penalty_${userId}_c${cycleNumber}_a${nowMicros + 1}`,
+    );
+    batch.set(penaltyLedger, {
+      kind: "penalty",
+      userId,
+      amount: penaltyAmount,
+      currency,
+      cycleNumber,
+      recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+      createdAt: serverTimestamp(),
+      paymentId: paymentRef.id,
+      note: "Super-admin late-payment penalty",
+    });
+  }
+  await batch.commit();
+  await writeAudit({
+    action: "super_admin_record_contribution",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { userId, cycleNumber, amount, isLate, penaltyAmount },
+  });
+}
+
+/// Super-admin direct-record of a payout on behalf of a member for the
+/// given cycle. Does NOT check the "contributions incomplete" guard so
+/// super-admin can push a payout through corrupted state — the warning
+/// UI is the safety net. Mock money moves pot → wallet.
+export async function recordPayoutAsSuperAdmin(args: {
+  groupId: string;
+  userId: string;
+  userName: string;
+  cycleNumber: number;
+  amount: number;
+  note?: string;
+}): Promise<void> {
+  const { groupId, userId, userName, cycleNumber, amount, note } = args;
+  if (amount <= 0) throw new Error("Amount must be positive.");
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.useSlots === true) {
+    throw new Error(
+      "Direct record on split-slot groups lands with the slot-management PR.",
+    );
+  }
+  const currency = String(g.currency ?? "CFA");
+  const isMock = String(g.moneyProvider ?? "") === "mock";
+  if (isMock) {
+    await mockPaymentProvider.transfer({
+      fromWalletId: groupPotId(groupId),
+      toWalletId: userWalletId(userId),
+      amount,
+      purpose: "payout",
+      groupId,
+      cycleNumber,
+    });
+  }
+  const batch = writeBatch(firestore);
+  const paymentRef = doc(
+    collection(firestore, "groups", groupId, "payments"),
+  );
+  batch.set(paymentRef, {
+    cycleNumber,
+    userId,
+    userName,
+    amount,
+    currency,
+    type: "payout",
+    paidAt: serverTimestamp(),
+    recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+    status: "active",
+    ...(note ? { note } : {}),
+  });
+  const nowMicros = Date.now() * 1000;
+  const ledgerRef = doc(
+    collection(firestore, "groups", groupId, "ledger"),
+    `payout_${userId}_c${cycleNumber}_a${nowMicros}`,
+  );
+  batch.set(ledgerRef, {
+    kind: "payout",
+    userId,
+    amount,
+    currency,
+    cycleNumber,
+    recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+    createdAt: serverTimestamp(),
+    paymentId: paymentRef.id,
+    ...(note ? { note } : {}),
+  });
+  const memberRef = doc(firestore, "groups", groupId, "members", userId);
+  batch.update(memberRef, { payoutCycle: cycleNumber });
+  await batch.commit();
+  await writeAudit({
+    action: "super_admin_record_payout",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { userId, cycleNumber, amount },
+  });
+}
+
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep
 // the payload small; the audit UI paginates for older entries.
 export function subscribeLedger(
