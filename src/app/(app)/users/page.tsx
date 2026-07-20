@@ -35,6 +35,10 @@ export default function UsersPage() {
   const [filter, setFilter] = useState<
     "all" | "active" | "banned" | "escalated" | "test"
   >("all");
+  const [sortKey, setSortKey] = useState<"name" | "lastActive" | "createdAt">(
+    "name",
+  );
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -86,15 +90,29 @@ export default function UsersPage() {
       }
     });
     const needle = q.trim().toLowerCase();
-    if (!needle) return byKind;
-    return byKind.filter(
-      (u) =>
-        u.name.toLowerCase().includes(needle) ||
-        u.email.toLowerCase().includes(needle) ||
-        u.uid.toLowerCase().includes(needle) ||
-        (u.username?.toLowerCase().includes(needle) ?? false),
-    );
-  }, [users, q, filter]);
+    const bySearch = !needle
+      ? byKind
+      : byKind.filter(
+          (u) =>
+            u.name.toLowerCase().includes(needle) ||
+            u.email.toLowerCase().includes(needle) ||
+            u.uid.toLowerCase().includes(needle) ||
+            (u.username?.toLowerCase().includes(needle) ?? false),
+        );
+    const sorted = [...bySearch].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "name") {
+        cmp = (a.name || "").localeCompare(b.name || "");
+      } else if (sortKey === "lastActive") {
+        cmp =
+          (a.lastActiveAt?.getTime() ?? 0) - (b.lastActiveAt?.getTime() ?? 0);
+      } else {
+        cmp = (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0);
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [users, q, filter, sortKey, sortDir]);
 
   const counts = useMemo(() => {
     if (!users) return null;
@@ -304,10 +322,35 @@ export default function UsersPage() {
                   <Checkbox checked={allVisibleChecked} tabIndex={-1} />
                 </div>
               </TableHead>
-              <TableHead>Name</TableHead>
+              <SortableHead
+                label="Name"
+                active={sortKey === "name"}
+                dir={sortDir}
+                onClick={() => {
+                  if (sortKey === "name") {
+                    setSortDir(sortDir === "asc" ? "desc" : "asc");
+                  } else {
+                    setSortKey("name");
+                    setSortDir("asc");
+                  }
+                }}
+              />
               <TableHead>Email</TableHead>
               <TableHead>Username</TableHead>
               <TableHead>Location</TableHead>
+              <SortableHead
+                label="Last active"
+                active={sortKey === "lastActive"}
+                dir={sortDir}
+                onClick={() => {
+                  if (sortKey === "lastActive") {
+                    setSortDir(sortDir === "asc" ? "desc" : "asc");
+                  } else {
+                    setSortKey("lastActive");
+                    setSortDir("desc");
+                  }
+                }}
+              />
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -315,7 +358,7 @@ export default function UsersPage() {
             {filtered === null && <LoadingRows />}
             {filtered !== null && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
                   {q ? "No users match your search." : "No users yet."}
                 </TableCell>
               </TableRow>
@@ -349,6 +392,9 @@ export default function UsersPage() {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {location || "—"}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatRelative(u.lastActiveAt)}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1">
@@ -506,12 +552,52 @@ function BulkNotifyDialog({
   );
 }
 
+function SortableHead({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+}) {
+  return (
+    <TableHead>
+      <button
+        onClick={onClick}
+        className={
+          "inline-flex items-center gap-1 " +
+          (active ? "text-foreground" : "text-muted-foreground")
+        }
+      >
+        {label}
+        {active && <span className="text-[10px]">{dir === "asc" ? "▲" : "▼"}</span>}
+      </button>
+    </TableHead>
+  );
+}
+
+function formatRelative(d: Date | null): string {
+  if (!d) return "—";
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function LoadingRows() {
   return (
     <>
       {[0, 1, 2, 3].map((i) => (
         <TableRow key={i}>
-          <TableCell colSpan={6}>
+          <TableCell colSpan={7}>
             <Skeleton className="h-6 w-full" />
           </TableCell>
         </TableRow>
