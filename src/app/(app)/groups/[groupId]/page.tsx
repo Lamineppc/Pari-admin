@@ -2044,10 +2044,26 @@ function LedgerList({
   // them. Cross-reference paymentId against the payments stream so we
   // can decorate a ledger row when the payment it points at was later
   // voided, keeping the audit trail readable without altering data.
+  //
+  // Older ledger entries (pre-paymentId rollout) don't carry the
+  // paymentId field, so we also flag any contribution/payout entry
+  // that has NO matching non-voided payment for its (userId, cycle,
+  // kind) tuple. That's a strong indicator the underlying payment was
+  // voided later even without the id backreference.
   const voidedPaymentIds = new Set(
     (payments ?? [])
       .filter((p) => p.status === "voided")
       .map((p) => p.id),
+  );
+  const activeContribKeys = new Set(
+    (payments ?? [])
+      .filter((p) => p.status !== "voided" && p.type === "contribution")
+      .map((p) => `${p.userId}_c${p.cycleNumber}`),
+  );
+  const activePayoutKeys = new Set(
+    (payments ?? [])
+      .filter((p) => p.status !== "voided" && p.type === "payout")
+      .map((p) => `${p.userId}_c${p.cycleNumber}`),
   );
   return (
     <div className="flex flex-col gap-1.5">
@@ -2055,7 +2071,13 @@ function LedgerList({
         Newest 25 entries. Older history stays queryable via ledger export.
       </div>
       {entries.map((e) => {
-        const voided = e.paymentId != null && voidedPaymentIds.has(e.paymentId);
+        const key = `${e.userId}_c${e.cycleNumber}`;
+        const linkedVoid =
+          e.paymentId != null && voidedPaymentIds.has(e.paymentId);
+        const orphaned =
+          (e.kind === "contribution" && !activeContribKeys.has(key)) ||
+          (e.kind === "payout" && !activePayoutKeys.has(key));
+        const voided = linkedVoid || orphaned;
         return (
           <div
             key={e.id}
