@@ -634,6 +634,7 @@ export type SlotSummary = {
   owners: SlotOwnerSummary[];
   pendingSecondaryUserId: string | null;
   payoutCycle: number | null;
+  addedByAdmin: boolean;
 };
 
 export function subscribeSlots(
@@ -664,6 +665,7 @@ export function subscribeSlots(
             pendingSecondaryUserId: pending?.userId ?? null,
             payoutCycle:
               typeof data.payoutCycle === "number" ? data.payoutCycle : null,
+            addedByAdmin: data.addedByAdmin === true,
           };
         }),
       ),
@@ -1211,6 +1213,10 @@ export async function addSlotForMember(
     owners: [{ userId, name: memberName, share: 1.0 }],
     payoutCycle: null,
     pendingSecondary: null,
+    // Marks the slot as a super-admin extra, so the mirror −slot button
+    // knows which slots it's allowed to remove (originals from group
+    // creation stay untouchable).
+    addedByAdmin: true,
   });
   await writeAudit({
     action: "add_slot_for_member",

@@ -1019,12 +1019,14 @@ function MemberList({
         const paid = m.payoutCycle != null;
         const roleBusy = busy === `role:${m.userId}`;
         const swapBusy = busy === `swap:${m.userId}`;
-        // Solo slots (share=1.0, unpaid) the member owns. We can only
-        // remove one of these — split slots and paid-out slots need
-        // dedicated flows and stay hands-off from the –slot button.
+        // −slot only touches slots that this member gained via +slot
+        // (addedByAdmin=true). Originals from group creation stay
+        // untouchable so the rotation can't be shrunk out from under
+        // a member who was there from day one.
         const removableSlots = (slots ?? [])
           .filter(
             (s) =>
+              s.addedByAdmin &&
               s.payoutCycle == null &&
               s.owners.length === 1 &&
               s.owners[0]!.userId === m.userId &&
@@ -1160,8 +1162,8 @@ function MemberList({
                     }}
                     title={
                       canRemoveSlot
-                        ? "Remove one unpaid solo slot from this member"
-                        : "No removable solo slot (split or paid-out slots need dedicated flows)"
+                        ? "Remove one super-admin-added slot from this member"
+                        : "Only slots added via +slot can be removed here"
                     }
                   >
                     −slot
