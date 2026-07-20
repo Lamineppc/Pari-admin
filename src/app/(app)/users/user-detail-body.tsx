@@ -9,6 +9,7 @@ import {
   Copy,
   KeyRound,
   LogOut,
+  Mail,
   Pencil,
   ShieldAlert,
   ShieldCheck,
@@ -37,6 +38,7 @@ import {
   notifyUser,
   sendPasswordReset,
   sendSupportMessage,
+  setContactValue,
   setContactVerified,
   setUserEscalation,
   setUserBan,
@@ -47,6 +49,7 @@ import {
   subscribeUserGroups,
   subscribeUserPayments,
   updateUserAdminNotes,
+  updateUserEmail,
   updateUserProfile,
   type BanType,
   type PlatformUser,
@@ -88,6 +91,7 @@ export function UserDetailBody({
   >(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
   const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
@@ -370,6 +374,14 @@ export function UserDetailBody({
             variant="outline"
             size="sm"
             className="w-fit"
+            onClick={() => setEmailOpen(true)}
+          >
+            <Mail /> Change email <ChevronRight />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
             onClick={() => setNotifyOpen(true)}
           >
             <Bell /> Notify user <ChevronRight />
@@ -628,6 +640,71 @@ export function UserDetailBody({
           onClose={() => setProfileOpen(false)}
         />
       )}
+      {emailOpen && (
+        <EditEmailDialog user={user} onClose={() => setEmailOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function EditEmailDialog({
+  user,
+  onClose,
+}: {
+  user: PlatformUser;
+  onClose: () => void;
+}) {
+  const [email, setEmail] = useState(user.email ?? "");
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true);
+    try {
+      await updateUserEmail(user.uid, email);
+      toast.success("Email updated. Marked unverified.");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Change email</h3>
+            <p className="text-xs text-muted-foreground">
+              Updates Firebase Auth and the Firestore user doc. Resets email
+              verification.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-20 text-xs text-muted-foreground">Email</label>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              autoComplete="off"
+              placeholder="new@example.com"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -981,6 +1058,20 @@ function UserContactPanel({
     }
   }
 
+  async function saveValue(kind: "phone" | "whatsapp", value: string) {
+    setBusy(kind);
+    try {
+      await setContactValue(uid, kind, value);
+      toast.success(
+        `${kind === "phone" ? "Phone" : "WhatsApp"} updated. Marked unverified.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <section className="flex flex-col gap-2">
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -997,6 +1088,7 @@ function UserContactPanel({
             verified={contact.phoneVerified}
             busy={busy === "phone"}
             onToggle={() => toggle("phone", !contact.phoneVerified)}
+            onSave={(v) => saveValue("phone", v)}
           />
           <ContactRow
             label="WhatsApp"
@@ -1004,6 +1096,7 @@ function UserContactPanel({
             verified={contact.whatsappVerified}
             busy={busy === "whatsapp"}
             onToggle={() => toggle("whatsapp", !contact.whatsappVerified)}
+            onSave={(v) => saveValue("whatsapp", v)}
           />
         </div>
       )}
@@ -1017,42 +1110,102 @@ function ContactRow({
   verified,
   busy,
   onToggle,
+  onSave,
 }: {
   label: string;
   value: string | null;
   verified: boolean;
   busy: boolean;
   onToggle: () => void;
+  onSave: (value: string) => void | Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+
+  useEffect(() => {
+    if (!editing) setDraft(value ?? "");
+  }, [value, editing]);
+
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
       <span className="w-20 text-xs text-muted-foreground">{label}</span>
-      <span className="flex-1 truncate font-mono text-xs">
-        {value ?? "—"}
-      </span>
-      {verified ? (
-        <Badge
-          variant="outline"
-          className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-        >
-          verified
-        </Badge>
+      {editing ? (
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="+221…"
+          className="flex-1 rounded-md border bg-background px-2 py-1 font-mono text-xs"
+        />
       ) : (
-        <Badge variant="outline" className="text-[10px]">
-          unverified
-        </Badge>
+        <span className="flex-1 truncate font-mono text-xs">
+          {value ?? "—"}
+        </span>
       )}
-      {value && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="w-fit"
-          disabled={busy}
-          onClick={onToggle}
-        >
-          {verified ? "Mark unverified" : "Mark verified"}{" "}
-          <ChevronRight />
-        </Button>
+      {!editing && (
+        verified ? (
+          <Badge
+            variant="outline"
+            className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+          >
+            verified
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px]">
+            unverified
+          </Badge>
+        )
+      )}
+      {editing ? (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-fit"
+            disabled={busy || draft.trim() === (value ?? "")}
+            onClick={async () => {
+              await onSave(draft);
+              setEditing(false);
+            }}
+          >
+            Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-fit"
+            disabled={busy}
+            onClick={() => {
+              setDraft(value ?? "");
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-fit"
+            disabled={busy}
+            onClick={() => setEditing(true)}
+          >
+            <Pencil className="h-3 w-3" /> Edit
+          </Button>
+          {value && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-fit"
+              disabled={busy}
+              onClick={onToggle}
+            >
+              {verified ? "Mark unverified" : "Mark verified"}{" "}
+              <ChevronRight />
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

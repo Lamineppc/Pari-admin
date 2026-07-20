@@ -336,6 +336,10 @@ const generateResetLinkFn = httpsCallable<
   { uid: string },
   { link: string; email: string }
 >(firebaseFunctions, "generatePasswordResetLink");
+const updateUserEmailFn = httpsCallable<
+  { uid: string; email: string },
+  { ok: boolean; unchanged?: boolean }
+>(firebaseFunctions, "updateUserEmail");
 
 /// Revokes every active refresh token for [uid] via the server-side
 /// forceSignOut callable. The Admin SDK path is the only way to
@@ -383,6 +387,57 @@ export function subscribeUserContact(
     },
     (err) => onError?.(err),
   );
+}
+
+/// Write a new value for the phone or whatsapp field of [uid]'s
+/// private contact subdoc. Passing an empty string clears the value.
+/// Auto-flips the corresponding verified flag back to false — the
+/// old OTP no longer proves anything about a fresh number.
+export async function setContactValue(
+  uid: string,
+  kind: "phone" | "whatsapp",
+  value: string,
+): Promise<void> {
+  const ref = doc(firestore, "users", uid, "private", "contact");
+  const trimmed = value.trim();
+  const next = trimmed || null;
+  const valueField = kind;
+  const verifiedField = kind === "phone" ? "phoneVerified" : "whatsappVerified";
+  await setDoc(
+    ref,
+    { [valueField]: next, [verifiedField]: false },
+    { merge: true },
+  );
+  await writeAudit({
+    action: "update_contact_value",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { kind, value: next },
+  });
+}
+
+/// Super-admin email change: routes through the updateUserEmail
+/// callable so Firebase Auth stays the source of truth. Also flips
+/// emailVerified back to false server-side. Client-side audit runs
+/// too so the panel's audit log records the intent.
+export async function updateUserEmail(
+  uid: string,
+  email: string,
+): Promise<void> {
+  const next = email.trim().toLowerCase();
+  if (!next) throw new Error("Email required.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(next)) {
+    throw new Error("Email is malformed.");
+  }
+  await updateUserEmailFn({ uid, email: next });
+  await writeAudit({
+    action: "update_user_email",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { email: next },
+  });
 }
 
 /// Flip verified state on either the phone or whatsapp field of

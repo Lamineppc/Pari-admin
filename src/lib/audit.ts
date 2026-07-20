@@ -67,6 +67,8 @@ export type AuditAction =
   | "notify_user"
   | "send_support_message"
   | "set_contact_verified"
+  | "update_contact_value"
+  | "update_user_email"
   | "flag_user_escalation"
   | "clear_user_escalation"
   | "update_admin_notes"
