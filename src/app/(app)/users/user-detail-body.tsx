@@ -275,7 +275,7 @@ export function UserDetailBody({
 
         {!isSelf && !isBanned && (
           <>
-            <div className="grid gap-2">
+            <div className="grid max-w-md gap-2">
               <Label htmlFor="reason">Reason (sent to the user)</Label>
               <Textarea
                 id="reason"
@@ -289,6 +289,7 @@ export function UserDetailBody({
               variant="outline"
               disabled={busy !== null}
               onClick={() => apply("soft")}
+              className="w-fit"
             >
               <ShieldAlert /> Limit access (soft ban)
             </Button>
@@ -296,6 +297,7 @@ export function UserDetailBody({
               variant="destructive"
               disabled={busy !== null}
               onClick={() => apply("hard")}
+              className="w-fit"
             >
               <ShieldOff /> Revoke access (hard ban)
             </Button>
@@ -307,6 +309,7 @@ export function UserDetailBody({
             variant="default"
             disabled={busy !== null}
             onClick={() => apply("restore")}
+            className="w-fit"
           >
             <ShieldCheck /> Restore access
           </Button>
@@ -329,6 +332,7 @@ export function UserDetailBody({
               variant="outline"
               disabled={busy !== null}
               onClick={applyForceSignOut}
+              className="w-fit"
             >
               <LogOut /> Force sign-out
             </Button>
@@ -348,6 +352,7 @@ export function UserDetailBody({
               variant="destructive"
               disabled={busy !== null}
               onClick={applyHardDelete}
+              className="w-fit"
             >
               <Trash2 /> Hard-delete account
             </Button>
@@ -368,6 +373,7 @@ export function UserDetailBody({
               variant="outline"
               disabled={busy !== null}
               onClick={applyToggleTest}
+              className="w-fit"
             >
               <Beaker />{" "}
               {user.isTestAccount
@@ -380,6 +386,7 @@ export function UserDetailBody({
                   variant="outline"
                   disabled={busy !== null}
                   onClick={applyExitSimulation}
+                  className="w-fit"
                 >
                   <LogOut /> Exit simulation environment
                 </Button>
@@ -419,7 +426,7 @@ export function UserDetailBody({
                   : "…"}
               </div>
             </div>
-            <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div className="grid max-w-md grid-cols-[1fr_auto] gap-2">
               <Input
                 type="number"
                 min="0"
