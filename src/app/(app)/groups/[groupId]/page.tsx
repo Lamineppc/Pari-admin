@@ -79,6 +79,7 @@ import {
   type SimulatorRunResult,
 } from "@/lib/simulator";
 import { refillMemberWallets, trashMockGroup } from "@/lib/mock-groups";
+import { broadcastToGroupMembers } from "@/lib/notifications";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -933,6 +934,7 @@ function SetupPanel({
   const [cycleInput, setCycleInput] = useState<number>(currentCycle);
   const [busy, setBusy] = useState<string | null>(null);
   const [editingSettings, setEditingSettings] = useState(false);
+  const [notifying, setNotifying] = useState(false);
 
   useEffect(() => {
     setCycleInput(currentCycle);
@@ -1043,6 +1045,13 @@ function SetupPanel({
         >
           Edit settings
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setNotifying(true)}
+        >
+          Notify members
+        </Button>
       </div>
       {editingSettings && (
         <GroupSettingsDialog
@@ -1050,6 +1059,84 @@ function SetupPanel({
           onClose={() => setEditingSettings(false)}
         />
       )}
+      {notifying && (
+        <NotifyMembersDialog
+          groupId={groupId}
+          onClose={() => setNotifying(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NotifyMembersDialog({
+  groupId,
+  onClose,
+}: {
+  groupId: string;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+
+  async function send() {
+    setSending(true);
+    try {
+      const r = await broadcastToGroupMembers({ groupId, title, body });
+      toast.success(`Delivered to ${r.sent} of ${r.totalTargets} member(s).`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Broadcast failed.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Notify group members</h3>
+            <p className="text-xs text-muted-foreground">
+              Delivers one notification to every non-kicked member's inbox.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-20 text-xs text-muted-foreground">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Short headline"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-start gap-2">
+            <label className="w-20 pt-1 text-xs text-muted-foreground">Body</label>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={4}
+              placeholder="What do members need to know?"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={send} disabled={sending}>
+            {sending ? "Sending…" : "Send"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

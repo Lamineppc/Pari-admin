@@ -138,3 +138,54 @@ export async function sendBroadcast(args: {
 
   return { sent, totalTargets };
 }
+
+/// Sends a notification to every non-kicked member of a single group.
+/// Different rules apply than the platform-wide broadcast (target is
+/// scoped to one group's members subcollection) so it lives as its own
+/// helper. Returns delivered count; per-recipient errors are swallowed
+/// the same way as sendBroadcast so a partial failure still ships what
+/// it can.
+export async function broadcastToGroupMembers(args: {
+  groupId: string;
+  title: string;
+  body: string;
+  type?: string;
+}): Promise<{ sent: number; totalTargets: number }> {
+  const title = args.title.trim();
+  const body = args.body.trim();
+  if (!title) throw new Error("Title required.");
+  if (!body) throw new Error("Body required.");
+  const type = args.type ?? "group_broadcast";
+
+  const membersSnap = await getDocs(
+    collection(firestore, "groups", args.groupId, "members"),
+  );
+  const targetUids = membersSnap.docs
+    .filter((d) => d.data().kicked !== true)
+    .map((d) => d.id);
+  const totalTargets = targetUids.length;
+
+  const CHUNK = 100;
+  let sent = 0;
+  for (let i = 0; i < targetUids.length; i += CHUNK) {
+    const chunk = targetUids.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map(async (uid) => {
+        try {
+          await addDoc(collection(firestore, "users", uid, "notifications"), {
+            type,
+            title,
+            body,
+            groupId: args.groupId,
+            isRead: false,
+            createdAt: serverTimestamp(),
+          });
+          sent += 1;
+        } catch {
+          /* per-recipient errors swallowed */
+        }
+      }),
+    );
+  }
+  return { sent, totalTargets };
+}
