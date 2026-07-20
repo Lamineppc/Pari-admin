@@ -65,6 +65,37 @@ export function subscribeUsers(cb: (users: PlatformUser[]) => void, onError?: (e
   );
 }
 
+/// Live single-user stream. Used by the /users/[uid] detail page.
+export function subscribeUser(
+  uid: string,
+  cb: (user: PlatformUser | null) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, "users", uid),
+    (snap) => {
+      if (!snap.exists()) {
+        cb(null);
+        return;
+      }
+      const d = snap.data();
+      cb({
+        uid: (d.uid as string | undefined) ?? snap.id,
+        name: (d.name as string | undefined) ?? "",
+        email: (d.email as string | undefined) ?? "",
+        username: (d.username as string | undefined) ?? null,
+        banType: (d.banType as BanType | undefined) ?? null,
+        banReason: (d.banReason as string | undefined) ?? null,
+        city: (d.city as string | undefined) ?? null,
+        state: (d.state as string | undefined) ?? null,
+        country: (d.country as string | undefined) ?? null,
+        isTestAccount: (d.isTestAccount as boolean | undefined) ?? false,
+      });
+    },
+    (err) => onError?.(err),
+  );
+}
+
 // Mirrors FirestoreService.setUserBan. Pass banType=null to restore access.
 // Silently writes a notification to the target user's inbox so they see why
 // their access changed. Notification writes are best-effort — a rule

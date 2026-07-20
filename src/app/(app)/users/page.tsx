@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Users, Search, ShieldAlert, ShieldOff, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -19,14 +19,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { setUserBan, subscribeUsers, type PlatformUser } from "@/lib/users";
 import { useAuth } from "@/lib/auth-context";
-import { UserDetailSheet } from "./user-detail-sheet";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 
 export default function UsersPage() {
   const { user: authUser } = useAuth();
+  const router = useRouter();
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const searchParams = useSearchParams();
@@ -40,10 +39,11 @@ export default function UsersPage() {
   }, []);
 
   // Deep-link support: global search sends users here with ?selected=<uid>.
+  // Forwards to the new full-page detail route so the URL is shareable.
   useEffect(() => {
     const sel = searchParams.get("selected");
-    if (sel) setSelectedId(sel);
-  }, [searchParams]);
+    if (sel) router.replace(`/users/${sel}`);
+  }, [searchParams, router]);
 
   const filtered = useMemo(() => {
     if (!users) return null;
@@ -58,7 +58,6 @@ export default function UsersPage() {
     );
   }, [users, q]);
 
-  const selected = users?.find((u) => u.uid === selectedId) ?? null;
   const allVisibleChecked =
     filtered !== null && filtered.length > 0 && filtered.every((u) => checkedIds.has(u.uid));
 
@@ -175,7 +174,7 @@ export default function UsersPage() {
               return (
                 <TableRow
                   key={u.uid}
-                  onClick={() => setSelectedId(u.uid)}
+                  onClick={() => router.push(`/users/${u.uid}`)}
                   className="cursor-pointer"
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -218,12 +217,6 @@ export default function UsersPage() {
           </TableBody>
         </Table>
       </div>
-
-      <UserDetailSheet
-        user={selected}
-        currentUid={authUser?.uid ?? null}
-        onOpenChange={(o) => !o && setSelectedId(null)}
-      />
 
       <BulkActionBar count={checkedIds.size} onClear={() => setCheckedIds(new Set())}>
         <Button
