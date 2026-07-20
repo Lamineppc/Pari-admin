@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Beaker,
+  ChevronRight,
   LogOut,
   ShieldAlert,
   ShieldCheck,
@@ -291,7 +292,7 @@ export function UserDetailBody({
               onClick={() => apply("soft")}
               className="w-fit"
             >
-              <ShieldAlert /> Limit access (soft ban)
+              <ShieldAlert /> Limit access (soft ban) <ChevronRight />
             </Button>
             <Button
               variant="destructive"
@@ -299,7 +300,7 @@ export function UserDetailBody({
               onClick={() => apply("hard")}
               className="w-fit"
             >
-              <ShieldOff /> Revoke access (hard ban)
+              <ShieldOff /> Revoke access (hard ban) <ChevronRight />
             </Button>
           </>
         )}
@@ -311,7 +312,7 @@ export function UserDetailBody({
             onClick={() => apply("restore")}
             className="w-fit"
           >
-            <ShieldCheck /> Restore access
+            <ShieldCheck /> Restore access <ChevronRight />
           </Button>
         )}
       </section>
@@ -334,7 +335,7 @@ export function UserDetailBody({
               onClick={applyForceSignOut}
               className="w-fit"
             >
-              <LogOut /> Force sign-out
+              <LogOut /> Force sign-out <ChevronRight />
             </Button>
           </section>
           <Separator />
@@ -354,7 +355,7 @@ export function UserDetailBody({
               onClick={applyHardDelete}
               className="w-fit"
             >
-              <Trash2 /> Hard-delete account
+              <Trash2 /> Hard-delete account <ChevronRight />
             </Button>
           </section>
           <Separator />
@@ -378,7 +379,8 @@ export function UserDetailBody({
               <Beaker />{" "}
               {user.isTestAccount
                 ? "Convert to real account"
-                : "Convert to test account"}
+                : "Convert to test account"}{" "}
+              <ChevronRight />
             </Button>
             {user.isTestAccount && (
               <>
@@ -388,7 +390,7 @@ export function UserDetailBody({
                   onClick={applyExitSimulation}
                   className="w-fit"
                 >
-                  <LogOut /> Exit simulation environment
+                  <LogOut /> Exit simulation environment <ChevronRight />
                 </Button>
                 <p className="text-[11px] text-muted-foreground">
                   Removes this uid from every mock group&apos;s memberIds +
@@ -440,7 +442,7 @@ export function UserDetailBody({
                 disabled={busy !== null}
                 onClick={applyTopUp}
               >
-                Top up
+                Top up <ChevronRight />
               </Button>
             </div>
           </section>
