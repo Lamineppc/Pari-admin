@@ -425,10 +425,12 @@ export async function updateUserProfile(
   });
 }
 
-/// Notify a single user via their private inbox. Same shape as
-/// broadcastToGroupMembers but scoped to one uid. Type defaults to
-/// "admin_notice" so mobile can route it distinctly from group
-/// broadcasts.
+/// Notify a single user via two paths at once: their private inbox
+/// (drives push + notification listener) and a read-only conversation
+/// with the Pari team so the message is archived and readable from
+/// the Messages tab without a reply affordance. The conversation id
+/// is deterministic (`admin_${uid}`) so repeated notifies append to
+/// the same thread instead of scattering across many.
 export async function notifyUser(args: {
   uid: string;
   title: string;
@@ -439,6 +441,11 @@ export async function notifyUser(args: {
   const body = args.body.trim();
   if (!title) throw new Error("Title required.");
   if (!body) throw new Error("Body required.");
+
+  const me = firebaseAuth.currentUser;
+  const senderId = me?.uid ?? "super_admin";
+
+  // Path 1 — private inbox for foreground/background push routing.
   await addDoc(collection(firestore, "users", args.uid, "notifications"), {
     type: args.type ?? "admin_notice",
     title,
@@ -446,6 +453,35 @@ export async function notifyUser(args: {
     isRead: false,
     createdAt: serverTimestamp(),
   });
+
+  // Path 2 — read-only "Pari team" conversation. Merge on the
+  // conversation doc so we upsert cleanly on the first send and just
+  // touch lastMessage on subsequent sends.
+  const convId = `admin_${args.uid}`;
+  const convRef = doc(firestore, "conversations", convId);
+  await setDoc(
+    convRef,
+    {
+      type: "admin_notice",
+      participantIds: [args.uid, senderId],
+      participantNames: {
+        [args.uid]: args.uid,
+        [senderId]: "Sales Team",
+      },
+      readOnly: true,
+      lastMessage: `${title} — ${body}`.slice(0, 200),
+      lastMessageAt: serverTimestamp(),
+      lastSenderId: senderId,
+      createdAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await addDoc(collection(convRef, "messages"), {
+    senderId,
+    text: `${title}\n\n${body}`,
+    createdAt: serverTimestamp(),
+  });
+
   await writeAudit({
     action: "notify_user",
     targetType: "user",
