@@ -780,19 +780,32 @@ function MemberList({
       toast.error("Payout reset on split-slot groups lands in PR-1b's slot management.");
       return;
     }
-    if (m.payoutCycle == null) {
-      toast.error("This member hasn't been paid out yet — nothing to reset.");
-      return;
+    const label = m.name || "this member";
+    const parts: string[] = [];
+    if (m.payoutCycle != null) {
+      parts.push(`the payout for cycle ${m.payoutCycle} (wallet → pot)`);
     }
+    parts.push("every non-voided contribution (pot → wallet)");
     const ok = window.confirm(
-      `Reset ${m.name || "this member"}'s payout for cycle ${m.payoutCycle}? The pot will be refunded from their wallet and the payout doc will be voided. Group currentCycle is NOT rolled back — do that from Cycle Correction if needed.`,
+      `Reset ${label}? This voids ${parts.join(" AND ")}. Group currentCycle is NOT rolled back — use Cycle Correction if you also want that.`,
     );
     if (!ok) return;
     setBusy(`reset:${m.userId}`);
     try {
       const r = await resetMemberPayout(groupId, m.userId);
+      const bits: string[] = [];
+      if (r.reversedPayoutAmount > 0) {
+        bits.push(
+          `reversed ${currency} ${r.reversedPayoutAmount.toLocaleString()} payout`,
+        );
+      }
+      if (r.refundedContribAmount > 0) {
+        bits.push(
+          `refunded ${currency} ${r.refundedContribAmount.toLocaleString()} contribs`,
+        );
+      }
       toast.success(
-        `Reset. Reversed ${currency} ${r.reversedAmount.toLocaleString()} across ${r.voidedPayments} payout doc(s).`,
+        `Reset — ${bits.join(", ") || "no money moved"} across ${r.voidedPayments} voided doc(s).`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Reset failed.");
@@ -904,9 +917,9 @@ function MemberList({
               <Button
                 variant="outline"
                 size="sm"
-                disabled={busy === `reset:${m.userId}` || !paid}
+                disabled={busy === `reset:${m.userId}`}
                 onClick={() => triggerReset(m)}
-                title={paid ? "Reset payout (reverse mock money)" : "No payout to reset"}
+                title="Reset payout + refund all non-voided contributions"
               >
                 reset
               </Button>

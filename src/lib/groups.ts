@@ -706,18 +706,25 @@ export async function kickMember(
   return { refundAmount, voidedPayments: active.length };
 }
 
-/// Reset a member's most recent non-voided payout: voids the payout
-/// doc(s), reverses the mock-money transfer (user wallet → pot) so the
-/// balance sheet stays honest, and clears `payoutCycle` on the member
-/// doc so they show as unpaid again. Real-money groups throw — an
-/// Orange Money reversal has to run through the Cloud Function.
+/// Full member reset: voids every non-voided payout AND contribution
+/// this user has recorded on the group, reverses the corresponding
+/// mock-money movements (payout: user wallet → pot; contribution: pot
+/// → user wallet), and clears `payoutCycle` on the member doc so they
+/// show as unpaid again. Net effect: the member's participation across
+/// those cycles is undone and both balance sheets rewind.
 ///
-/// Unlike the mobile `unlockPayout` helper this does NOT roll back the
-/// group's `currentCycle`; super-admin retains that decision.
+/// Real-money groups throw — reversals have to run through the Cloud
+/// Function. Unlike mobile `unlockPayout`, this does NOT roll back
+/// group.currentCycle; super-admin drives that via Cycle Correction if
+/// they need it.
 export async function resetMemberPayout(
   groupId: string,
   userId: string,
-): Promise<{ voidedPayments: number; reversedAmount: number }> {
+): Promise<{
+  voidedPayments: number;
+  reversedPayoutAmount: number;
+  refundedContribAmount: number;
+}> {
   const groupRef = doc(firestore, "groups", groupId);
   const groupSnap = await getDoc(groupRef);
   if (!groupSnap.exists()) throw new Error("Group not found.");
@@ -727,39 +734,82 @@ export async function resetMemberPayout(
 
   const paymentsCol = collection(firestore, "groups", groupId, "payments");
   const snap = await getDocs(query(paymentsCol, where("userId", "==", userId)));
-  const active = snap.docs.filter((d) => {
+  const activePayouts = snap.docs.filter((d) => {
     const data = d.data();
     return data.type === "payout" && (data.status as string | undefined) !== "voided";
   });
-  if (active.length === 0) {
-    throw new Error("No active payout found for this member.");
+  const activeContribs = snap.docs.filter((d) => {
+    const data = d.data();
+    return (
+      data.type === "contribution" && (data.status as string | undefined) !== "voided"
+    );
+  });
+  if (activePayouts.length === 0 && activeContribs.length === 0) {
+    throw new Error("Nothing to reset — no active payout or contribution.");
   }
-  let reversedAmount = 0;
+  let reversedPayoutAmount = 0;
   let cycleNumber = 0;
-  for (const d of active) {
-    reversedAmount += Number(d.data().amount ?? 0);
+  for (const d of activePayouts) {
+    reversedPayoutAmount += Number(d.data().amount ?? 0);
+    cycleNumber = Math.max(cycleNumber, Number(d.data().cycleNumber ?? 0));
+  }
+  let refundedContribAmount = 0;
+  for (const d of activeContribs) {
+    refundedContribAmount += Number(d.data().amount ?? 0);
     cycleNumber = Math.max(cycleNumber, Number(d.data().cycleNumber ?? 0));
   }
   if (!isMock) {
     throw new Error(
-      "Real-money payout reversal needs the Cloud Function path (PR 6b–d).",
+      "Real-money reset needs the Cloud Function path (PR 6b–d).",
     );
   }
-  await mockPaymentProvider.transfer({
-    fromWalletId: userWalletId(userId),
-    toWalletId: groupPotId(groupId),
-    amount: reversedAmount,
-    purpose: "refund",
-    groupId,
-    cycleNumber,
-  });
+
+  // Move money first so an underfunded wallet/pot fails before any docs
+  // are voided. Payout reversal drains the user's wallet back into the
+  // pot; contribution refund does the opposite.
+  if (reversedPayoutAmount > 0) {
+    await mockPaymentProvider.transfer({
+      fromWalletId: userWalletId(userId),
+      toWalletId: groupPotId(groupId),
+      amount: reversedPayoutAmount,
+      purpose: "refund",
+      groupId,
+      cycleNumber,
+    });
+  }
+  if (refundedContribAmount > 0) {
+    await mockPaymentProvider.transfer({
+      fromWalletId: groupPotId(groupId),
+      toWalletId: userWalletId(userId),
+      amount: refundedContribAmount,
+      purpose: "refund",
+      groupId,
+      cycleNumber,
+    });
+  }
 
   const batch = writeBatch(firestore);
-  for (const d of active) {
+  for (const d of [...activePayouts, ...activeContribs]) {
     batch.update(d.ref, { status: "voided", voidedAt: serverTimestamp() });
   }
   const memberRef = doc(firestore, "groups", groupId, "members", userId);
   batch.update(memberRef, { payoutCycle: deleteField() });
+  if (refundedContribAmount > 0) {
+    const ledgerRef = doc(
+      collection(firestore, "groups", groupId, "ledger"),
+      `refund_${userId}_reset_${Date.now()}`,
+    );
+    batch.set(ledgerRef, {
+      kind: "refund",
+      userId,
+      amount: refundedContribAmount,
+      currency,
+      cycleNumber,
+      recordedBy: firebaseAuth.currentUser?.uid ?? "super_admin",
+      createdAt: serverTimestamp(),
+      note: "Super-admin member reset — contributions refunded",
+    });
+  }
   await batch.commit();
 
   await writeAudit({
@@ -767,10 +817,20 @@ export async function resetMemberPayout(
     targetType: "group",
     targetId: groupId,
     test: false,
-    after: { userId, reversedAmount, voidedPayments: active.length, cycleNumber },
+    after: {
+      userId,
+      reversedPayoutAmount,
+      refundedContribAmount,
+      voidedPayments: activePayouts.length + activeContribs.length,
+      cycleNumber,
+    },
   });
 
-  return { voidedPayments: active.length, reversedAmount };
+  return {
+    voidedPayments: activePayouts.length + activeContribs.length,
+    reversedPayoutAmount,
+    refundedContribAmount,
+  };
 }
 
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep
