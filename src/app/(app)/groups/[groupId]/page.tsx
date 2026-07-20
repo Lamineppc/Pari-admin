@@ -1031,7 +1031,7 @@ function MemberList({
               Math.abs(s.owners[0]!.share - 1.0) < 1e-6,
           )
           .sort((a, b) => b.position - a.position);
-        const canRemoveSlot = removableSlots.length >= 2;
+        const canRemoveSlot = removableSlots.length >= 1;
         return (
           <div
             key={m.userId}
@@ -1160,8 +1160,8 @@ function MemberList({
                     }}
                     title={
                       canRemoveSlot
-                        ? "Remove one solo slot (needs at least 2 unpaid solo slots)"
-                        : "Needs at least 2 unpaid solo slots owned by this member"
+                        ? "Remove one unpaid solo slot from this member"
+                        : "No removable solo slot (split or paid-out slots need dedicated flows)"
                     }
                   >
                     −slot
