@@ -719,6 +719,7 @@ export default function GroupDetailPage() {
           currency={group.currency}
           currentCycle={group.currentCycle ?? 1}
           defaultAmount={group.amount ?? 0}
+          slots={slots}
         />
       </div>
 
@@ -867,6 +868,7 @@ function MemberList({
   currency,
   currentCycle,
   defaultAmount,
+  slots,
 }: {
   groupId: string;
   members: MemberSummary[] | null;
@@ -875,6 +877,7 @@ function MemberList({
   currency: string;
   currentCycle: number;
   defaultAmount: number;
+  slots: SlotSummary[] | null;
 }) {
   const [swapSelection, setSwapSelection] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1016,6 +1019,19 @@ function MemberList({
         const paid = m.payoutCycle != null;
         const roleBusy = busy === `role:${m.userId}`;
         const swapBusy = busy === `swap:${m.userId}`;
+        // Solo slots (share=1.0, unpaid) the member owns. We can only
+        // remove one of these — split slots and paid-out slots need
+        // dedicated flows and stay hands-off from the –slot button.
+        const removableSlots = (slots ?? [])
+          .filter(
+            (s) =>
+              s.payoutCycle == null &&
+              s.owners.length === 1 &&
+              s.owners[0]!.userId === m.userId &&
+              Math.abs(s.owners[0]!.share - 1.0) < 1e-6,
+          )
+          .sort((a, b) => b.position - a.position);
+        const canRemoveSlot = removableSlots.length >= 2;
         return (
           <div
             key={m.userId}
@@ -1087,33 +1103,70 @@ function MemberList({
                 record
               </Button>
               {useSlots && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={busy === `add-slot:${m.userId}`}
-                  onClick={async () => {
-                    setBusy(`add-slot:${m.userId}`);
-                    try {
-                      const r = await addSlotForMember(
-                        groupId,
-                        m.userId,
-                        m.name,
-                      );
-                      toast.success(
-                        `Added slot #${r.position} for ${m.name || "member"}.`,
-                      );
-                    } catch (e) {
-                      toast.error(
-                        e instanceof Error ? e.message : "Add slot failed.",
-                      );
-                    } finally {
-                      setBusy(null);
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy === `add-slot:${m.userId}`}
+                    onClick={async () => {
+                      setBusy(`add-slot:${m.userId}`);
+                      try {
+                        const r = await addSlotForMember(
+                          groupId,
+                          m.userId,
+                          m.name,
+                        );
+                        toast.success(
+                          `Added slot #${r.position} for ${m.name || "member"}.`,
+                        );
+                      } catch (e) {
+                        toast.error(
+                          e instanceof Error ? e.message : "Add slot failed.",
+                        );
+                      } finally {
+                        setBusy(null);
+                      }
+                    }}
+                    title="Add an extra slot (tail) for this member"
+                  >
+                    +slot
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!canRemoveSlot || busy === `sub-slot:${m.userId}`}
+                    onClick={async () => {
+                      const target = removableSlots[0]!;
+                      if (
+                        !window.confirm(
+                          `Remove ${m.name || "member"}'s slot #${target.position}? Slots after it will shift down by 1.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      setBusy(`sub-slot:${m.userId}`);
+                      try {
+                        await removeSlot(groupId, target.id);
+                        toast.success(
+                          `Removed slot #${target.position} from ${m.name || "member"}.`,
+                        );
+                      } catch (e) {
+                        toast.error(
+                          e instanceof Error ? e.message : "Remove slot failed.",
+                        );
+                      } finally {
+                        setBusy(null);
+                      }
+                    }}
+                    title={
+                      canRemoveSlot
+                        ? "Remove one solo slot (needs at least 2 unpaid solo slots)"
+                        : "Needs at least 2 unpaid solo slots owned by this member"
                     }
-                  }}
-                  title="Add an extra slot (tail) for this member"
-                >
-                  +slot
-                </Button>
+                  >
+                    −slot
+                  </Button>
+                </>
               )}
               <Button
                 variant="destructive"
