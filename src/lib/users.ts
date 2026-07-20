@@ -487,6 +487,43 @@ export async function setUserEscalation(
   });
 }
 
+/// Live stream of the super-admin scratchpad on [uid]. Backed by
+/// users/{uid}/admin_notes/notes — super-admin R/W only, so the
+/// target user never sees what support wrote about them.
+export function subscribeUserAdminNotes(
+  uid: string,
+  cb: (notes: string) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, "users", uid, "admin_notes", "notes"),
+    (snap) => cb((snap.data()?.text as string | undefined) ?? ""),
+    (err) => onError?.(err),
+  );
+}
+
+export async function updateUserAdminNotes(
+  uid: string,
+  notes: string,
+): Promise<void> {
+  await setDoc(
+    doc(firestore, "users", uid, "admin_notes", "notes"),
+    {
+      text: notes,
+      updatedAt: serverTimestamp(),
+      updatedBy: firebaseAuth.currentUser?.uid ?? "",
+    },
+    { merge: true },
+  );
+  await writeAudit({
+    action: "update_admin_notes",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { length: notes.length },
+  });
+}
+
 export type SupportMessage = {
   id: string;
   senderId: string;

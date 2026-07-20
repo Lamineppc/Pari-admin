@@ -40,9 +40,11 @@ import {
   setUserBan,
   setUserIsTestAccount,
   subscribeSupportMessages,
+  subscribeUserAdminNotes,
   subscribeUserContact,
   subscribeUserGroups,
   subscribeUserPayments,
+  updateUserAdminNotes,
   updateUserProfile,
   type BanType,
   type PlatformUser,
@@ -525,6 +527,9 @@ export function UserDetailBody({
         <>
           <Separator />
           <UserEscalationPanel user={user} />
+
+          <Separator />
+          <UserNotesPanel uid={user.uid} />
         </>
       )}
 
@@ -738,6 +743,79 @@ function EditProfileDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function UserNotesPanel({ uid }: { uid: string }) {
+  const [stored, setStored] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeUserAdminNotes(
+      uid,
+      (n) => {
+        setStored(n);
+        setDraft(n);
+      },
+      () => setStored(""),
+    );
+    return unsub;
+  }, [uid]);
+
+  const dirty = stored !== null && draft !== stored;
+
+  async function save() {
+    setSaving(true);
+    try {
+      await updateUserAdminNotes(uid, draft);
+      toast.success("Notes saved.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Super-admin notes
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Private scratchpad — visible to super-admin only. The target user
+        cannot read this, so use it for support context, priors, or notes to
+        future-you.
+      </p>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={5}
+        placeholder={stored === null ? "Loading…" : "Nothing recorded yet."}
+        disabled={stored === null}
+        className="max-w-2xl rounded-md border bg-background px-2 py-1 text-sm"
+      />
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          className="w-fit"
+          disabled={saving || !dirty}
+          onClick={save}
+        >
+          {saving ? "Saving…" : "Save notes"} <ChevronRight />
+        </Button>
+        {dirty && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-fit"
+            onClick={() => setDraft(stored ?? "")}
+          >
+            Discard
+          </Button>
+        )}
+      </div>
+    </section>
   );
 }
 
