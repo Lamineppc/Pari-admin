@@ -1184,6 +1184,183 @@ export async function recordPayoutAsSuperAdmin(args: {
   });
 }
 
+// ── Slot management ────────────────────────────────────────────────────────
+
+/// Append a solo slot at the tail owned by [userId]. Mirrors the
+/// `addExtraSlotForMember` admin action on mobile plus the tail-append
+/// used by healMissingSlots.
+export async function addSlotForMember(
+  groupId: string,
+  userId: string,
+  memberName: string,
+): Promise<{ slotId: string; position: number }> {
+  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+  if (g.useSlots !== true) {
+    throw new Error("This group does not use slots.");
+  }
+  const slotsCol = collection(firestore, "groups", groupId, "slots");
+  const existing = await getDocs(slotsCol);
+  const position = existing.docs.length + 1;
+  const currentCycle = Number(g.currentCycle ?? 1);
+  const slotRef = doc(slotsCol);
+  await setDoc(slotRef, {
+    position,
+    joinCycle: currentCycle,
+    owners: [{ userId, name: memberName, share: 1.0 }],
+    payoutCycle: null,
+    pendingSecondary: null,
+  });
+  await writeAudit({
+    action: "add_slot_for_member",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { userId, slotId: slotRef.id, position },
+  });
+  return { slotId: slotRef.id, position };
+}
+
+/// Delete a slot and shift the position of every slot that came after
+/// it so the rotation stays contiguous. Only allowed on slots that
+/// have not been paid out.
+export async function removeSlot(
+  groupId: string,
+  slotId: string,
+): Promise<{ removedPosition: number; shifted: number }> {
+  const slotsCol = collection(firestore, "groups", groupId, "slots");
+  const targetRef = doc(slotsCol, slotId);
+  const target = await getDoc(targetRef);
+  if (!target.exists()) throw new Error("Slot not found.");
+  const targetData = target.data();
+  if (targetData.payoutCycle != null) {
+    throw new Error("Cannot remove a slot that has already been paid out.");
+  }
+  const removedPosition = Number(targetData.position ?? 0);
+  const allSnap = await getDocs(slotsCol);
+  const batch = writeBatch(firestore);
+  batch.delete(targetRef);
+  let shifted = 0;
+  for (const d of allSnap.docs) {
+    if (d.id === slotId) continue;
+    const p = Number(d.data().position ?? 0);
+    if (p > removedPosition) {
+      batch.update(d.ref, { position: p - 1 });
+      shifted++;
+    }
+  }
+  await batch.commit();
+  await writeAudit({
+    action: "remove_slot",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { slotId, removedPosition, shifted },
+  });
+  return { removedPosition, shifted };
+}
+
+/// Replace the sole owner of a solo slot. Blocks split slots (they
+/// need two-owner logic) and paid-out slots (rewriting owners after a
+/// payout leaves the payout doc pointing at the wrong user).
+export async function reassignSlotOwner(
+  groupId: string,
+  slotId: string,
+  newUserId: string,
+  newUserName: string,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId, "slots", slotId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Slot not found.");
+  const data = snap.data();
+  const owners =
+    (data.owners as { userId?: string; share?: number }[] | undefined) ?? [];
+  if (owners.length !== 1 || Number(owners[0]?.share ?? 0) !== 1.0) {
+    throw new Error(
+      "Owner reassignment only supports solo slots (share=1.0). Split slots need cancel-split first.",
+    );
+  }
+  if (data.payoutCycle != null) {
+    throw new Error("Cannot reassign a slot that has already been paid out.");
+  }
+  await updateDoc(ref, {
+    owners: [{ userId: newUserId, name: newUserName, share: 1.0 }],
+  });
+  await writeAudit({
+    action: "reassign_slot_owner",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: { slotId, previousOwner: owners[0]?.userId ?? null },
+    after: { slotId, newOwner: newUserId },
+  });
+}
+
+/// Force-accept a pending split proposal on behalf of the invitee.
+/// Converts the sole owner into two half-share owners (original +
+/// pendingSecondary) and clears pendingSecondary. Mirrors the client
+/// `acceptSlotSplit` path so the resulting shape is identical.
+export async function forceAcceptSplit(
+  groupId: string,
+  slotId: string,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId, "slots", slotId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Slot not found.");
+  const data = snap.data();
+  const owners =
+    (data.owners as { userId?: string; name?: string; share?: number }[] | undefined) ?? [];
+  const pending = data.pendingSecondary as
+    | { userId?: string; name?: string }
+    | null
+    | undefined;
+  if (!pending?.userId) throw new Error("No pending split on this slot.");
+  if (owners.length !== 1 || Number(owners[0]?.share ?? 0) !== 1.0) {
+    throw new Error("Split accept requires a solo owner (share=1.0).");
+  }
+  const existing = owners[0]!;
+  await updateDoc(ref, {
+    owners: [
+      { userId: existing.userId, name: existing.name ?? "", share: 0.5 },
+      { userId: pending.userId, name: pending.name ?? "", share: 0.5 },
+    ],
+    pendingSecondary: null,
+  });
+  await writeAudit({
+    action: "force_accept_split",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: {
+      slotId,
+      primary: existing.userId,
+      secondary: pending.userId,
+    },
+  });
+}
+
+/// Clear a pending split proposal without accepting it. Used when the
+/// invitee ignores the request and admin wants the slot to stay solo.
+export async function cancelPendingSplit(
+  groupId: string,
+  slotId: string,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId, "slots", slotId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Slot not found.");
+  const pending = snap.data().pendingSecondary as { userId?: string } | null;
+  if (!pending?.userId) throw new Error("No pending split on this slot.");
+  await updateDoc(ref, { pendingSecondary: null });
+  await writeAudit({
+    action: "cancel_pending_split",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { slotId, cancelledSecondary: pending.userId },
+  });
+}
+
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep
 // the payload small; the audit UI paginates for older entries.
 export function subscribeLedger(

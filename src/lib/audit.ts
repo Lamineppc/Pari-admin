@@ -66,7 +66,12 @@ export type AuditAction =
   | "set_group_current_cycle"
   | "set_positions_locked"
   | "resync_member_positions"
-  | "heal_missing_slots";
+  | "heal_missing_slots"
+  | "add_slot_for_member"
+  | "remove_slot"
+  | "reassign_slot_owner"
+  | "force_accept_split"
+  | "cancel_pending_split";
 
 export type AuditTargetType =
   | "group"

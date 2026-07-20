@@ -32,8 +32,13 @@ import {
   demoteDefaultedAdmin,
   kickDefaultedAdmin,
   securedPhase,
+  addSlotForMember,
+  cancelPendingSplit,
+  forceAcceptSplit,
   healMissingSlots,
   kickMember,
+  reassignSlotOwner,
+  removeSlot,
   recordContributionAsSuperAdmin,
   recordPayoutAsSuperAdmin,
   resetMemberPayout,
@@ -681,7 +686,12 @@ export default function GroupDetailPage() {
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Slots ({slots?.length ?? "…"})
             </div>
-            <SlotList slots={slots} adminUid={group.createdBy} />
+            <SlotList
+              groupId={group.id}
+              slots={slots}
+              adminUid={group.createdBy}
+              members={members}
+            />
           </div>
         </>
       )}
@@ -1076,6 +1086,35 @@ function MemberList({
               >
                 record
               </Button>
+              {useSlots && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy === `add-slot:${m.userId}`}
+                  onClick={async () => {
+                    setBusy(`add-slot:${m.userId}`);
+                    try {
+                      const r = await addSlotForMember(
+                        groupId,
+                        m.userId,
+                        m.name,
+                      );
+                      toast.success(
+                        `Added slot #${r.position} for ${m.name || "member"}.`,
+                      );
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Add slot failed.",
+                      );
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                  title="Add an extra slot (tail) for this member"
+                >
+                  +slot
+                </Button>
+              )}
               <Button
                 variant="destructive"
                 size="sm"
@@ -1283,12 +1322,31 @@ function RecordPaymentDialog({
 }
 
 function SlotList({
+  groupId,
   slots,
   adminUid,
+  members,
 }: {
+  groupId: string;
   slots: SlotSummary[] | null;
   adminUid: string;
+  members: MemberSummary[] | null;
 }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [reassignFor, setReassignFor] = useState<SlotSummary | null>(null);
+
+  async function run<T>(key: string, fn: () => Promise<T>, ok: (r: T) => string) {
+    setBusy(key);
+    try {
+      const r = await fn();
+      toast.success(ok(r));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `${key} failed.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (slots === null) {
     return <div className="text-xs text-muted-foreground">Loading slots…</div>;
   }
@@ -1301,35 +1359,194 @@ function SlotList({
   }
   return (
     <div className="flex flex-col gap-1.5">
-      {slots.map((s) => (
-        <div
-          key={s.id}
-          className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs"
-        >
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-muted-foreground">#{s.position}</span>
-            <span className="font-mono text-[10px] text-muted-foreground">{s.id}</span>
+      {slots.map((s) => {
+        const isSolo =
+          s.owners.length === 1 && Math.abs(s.owners[0]!.share - 1.0) < 1e-6;
+        const paid = s.payoutCycle !== null;
+        const hasPending = !!s.pendingSecondaryUserId;
+        return (
+          <div
+            key={s.id}
+            className="flex flex-col gap-1 rounded border px-2 py-1.5 text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-muted-foreground">
+                #{s.position}
+              </span>
+              <div className="flex-1 truncate">
+                {s.owners.length === 0 ? (
+                  <span className="italic text-muted-foreground">empty</span>
+                ) : (
+                  s.owners
+                    .map(
+                      (o) =>
+                        `${o.name || o.userId.slice(0, 6)}${o.userId === adminUid ? " (admin)" : ""} ×${o.share}`,
+                    )
+                    .join(" + ")
+                )}
+                {hasPending && (
+                  <span className="ml-2 text-amber-600">→ pending secondary</span>
+                )}
+              </div>
+              {paid && (
+                <span className="text-[10px] text-blue-600">
+                  paid c{s.payoutCycle}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {hasPending && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `accept:${s.id}`}
+                    onClick={() =>
+                      run(
+                        `accept:${s.id}`,
+                        () => forceAcceptSplit(groupId, s.id),
+                        () => "Split accepted on invitee's behalf.",
+                      )
+                    }
+                  >
+                    accept split
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `cancel:${s.id}`}
+                    onClick={() =>
+                      run(
+                        `cancel:${s.id}`,
+                        () => cancelPendingSplit(groupId, s.id),
+                        () => "Pending split cleared.",
+                      )
+                    }
+                  >
+                    cancel split
+                  </Button>
+                </>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!isSolo || paid}
+                onClick={() => setReassignFor(s)}
+                title={
+                  paid
+                    ? "Cannot reassign a paid-out slot"
+                    : isSolo
+                      ? "Reassign owner"
+                      : "Only solo slots"
+                }
+              >
+                reassign
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={paid || busy === `remove:${s.id}`}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Remove slot #${s.position}? Slots after it will shift down by 1.`,
+                    )
+                  )
+                    return;
+                  run(
+                    `remove:${s.id}`,
+                    () => removeSlot(groupId, s.id),
+                    (r) => `Slot removed. Shifted ${r.shifted} slot(s).`,
+                  );
+                }}
+                title={paid ? "Cannot remove a paid-out slot" : "Remove slot"}
+              >
+                remove
+              </Button>
+            </div>
           </div>
-          <div className="flex-1 truncate">
-            {s.owners.length === 0 ? (
-              <span className="italic text-muted-foreground">empty</span>
-            ) : (
-              s.owners
-                .map(
-                  (o) =>
-                    `${o.name || o.userId.slice(0, 6)}${o.userId === adminUid ? " (admin)" : ""} ×${o.share}`,
-                )
-                .join(" + ")
-            )}
-            {s.pendingSecondaryUserId && (
-              <span className="ml-2 text-amber-600">→ pending</span>
-            )}
+        );
+      })}
+      {reassignFor && (
+        <SlotReassignDialog
+          slot={reassignFor}
+          members={members}
+          groupId={groupId}
+          onClose={() => setReassignFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function SlotReassignDialog({
+  slot,
+  members,
+  groupId,
+  onClose,
+}: {
+  slot: SlotSummary;
+  members: MemberSummary[] | null;
+  groupId: string;
+  onClose: () => void;
+}) {
+  const [selectedUid, setSelectedUid] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const eligible = (members ?? []).filter((m) => !m.kicked);
+
+  async function save() {
+    const m = eligible.find((x) => x.userId === selectedUid);
+    if (!m) {
+      toast.error("Pick a member.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await reassignSlotOwner(groupId, slot.id, m.userId, m.name);
+      toast.success(`Slot #${slot.position} reassigned to ${m.name}.`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reassign failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Reassign slot #{slot.position}</h3>
+            <p className="text-xs text-muted-foreground">
+              Current owner: {slot.owners[0]?.name ?? "—"}
+            </p>
           </div>
-          {s.payoutCycle !== null && (
-            <span className="text-[10px] text-blue-600">paid c{s.payoutCycle}</span>
-          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
         </div>
-      ))}
+        <select
+          value={selectedUid}
+          onChange={(e) => setSelectedUid(e.target.value)}
+          className="w-full rounded-md border bg-background px-2 py-1 text-sm"
+        >
+          <option value="">— pick a member —</option>
+          {eligible.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.name || m.userId.slice(0, 6)} (#{m.position})
+            </option>
+          ))}
+        </select>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Reassign"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
