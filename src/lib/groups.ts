@@ -1438,6 +1438,65 @@ export async function cancelPendingSplit(
   });
 }
 
+// ── Payments (contribution + payout docs, incl. voided) ───────────────────
+
+export type PaymentEntry = {
+  id: string;
+  cycleNumber: number;
+  userId: string;
+  userName: string;
+  amount: number;
+  currency: string;
+  type: "contribution" | "payout";
+  status: string | null;
+  paidAt: Date | null;
+  isLate: boolean;
+  penaltyAmount: number | null;
+  slotId: string | null;
+  note: string | null;
+};
+
+export function subscribeGroupPayments(
+  groupId: string,
+  cb: (entries: PaymentEntry[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups", groupId, "payments"),
+    orderBy("paidAt", "desc"),
+  );
+  return onSnapshot(
+    q,
+    (s) =>
+      cb(
+        s.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            cycleNumber: Number(data.cycleNumber ?? 0),
+            userId: String(data.userId ?? ""),
+            userName: String(data.userName ?? ""),
+            amount: Number(data.amount ?? 0),
+            currency: String(data.currency ?? "CFA"),
+            type:
+              (data.type as "contribution" | "payout" | undefined) ??
+              "contribution",
+            status: (data.status as string | undefined) ?? null,
+            paidAt: (data.paidAt as Timestamp | undefined)?.toDate() ?? null,
+            isLate: data.isLate === true,
+            penaltyAmount:
+              typeof data.penaltyAmount === "number"
+                ? data.penaltyAmount
+                : null,
+            slotId: (data.slotId as string | undefined) ?? null,
+            note: (data.note as string | undefined) ?? null,
+          };
+        }),
+      ),
+    (err) => onError?.(err),
+  );
+}
+
 // Live stream of the group's ledger, newest first. Bounded by [max] to keep
 // the payload small; the audit UI paginates for older entries.
 export function subscribeLedger(

@@ -50,6 +50,7 @@ import {
   setMemberRole,
   subscribeGroup,
   subscribeGroupMembers,
+  subscribeGroupPayments,
   subscribeLedger,
   subscribeSlots,
   swapMemberPositions,
@@ -60,6 +61,7 @@ import {
   type LedgerKind,
   type MemberRole,
   type MemberSummary,
+  type PaymentEntry,
   type SlotSummary,
 } from "@/lib/groups";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +123,7 @@ export default function GroupDetailPage() {
   >(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [members, setMembers] = useState<MemberSummary[] | null>(null);
+  const [payments, setPayments] = useState<PaymentEntry[] | null>(null);
   const [slots, setSlots] = useState<SlotSummary[] | null>(null);
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
@@ -149,6 +152,14 @@ export default function GroupDetailPage() {
     if (!groupId) return;
     const unsub = subscribeGroupMembers(groupId, setMembers, () =>
       setMembers([]),
+    );
+    return unsub;
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const unsub = subscribeGroupPayments(groupId, setPayments, () =>
+      setPayments([]),
     );
     return unsub;
   }, [groupId]);
@@ -732,6 +743,173 @@ export default function GroupDetailPage() {
           Recent ledger
         </div>
         <LedgerList entries={ledger} currency={group.currency} />
+      </div>
+
+      <Separator />
+
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Payments ({payments?.length ?? "…"})
+        </div>
+        <PaymentsList
+          entries={payments}
+          currency={group.currency}
+          members={members}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Full payments viewer with filters ──────────────────────────────────────
+
+function PaymentsList({
+  entries,
+  currency,
+  members,
+}: {
+  entries: PaymentEntry[] | null;
+  currency: string;
+  members: MemberSummary[] | null;
+}) {
+  const [cycleFilter, setCycleFilter] = useState<number | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "contribution" | "payout">(
+    "all",
+  );
+  const [userFilter, setUserFilter] = useState<string>("all");
+  const [showVoided, setShowVoided] = useState(true);
+
+  if (entries === null) {
+    return <div className="text-xs text-muted-foreground">Loading payments…</div>;
+  }
+  if (entries.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        No payments recorded yet.
+      </div>
+    );
+  }
+  const cycles = Array.from(new Set(entries.map((e) => e.cycleNumber))).sort(
+    (a, b) => b - a,
+  );
+  const filtered = entries.filter((e) => {
+    if (cycleFilter !== "all" && e.cycleNumber !== cycleFilter) return false;
+    if (typeFilter !== "all" && e.type !== typeFilter) return false;
+    if (userFilter !== "all" && e.userId !== userFilter) return false;
+    if (!showVoided && e.status === "voided") return false;
+    return true;
+  });
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2 text-xs">
+        <select
+          value={cycleFilter === "all" ? "all" : String(cycleFilter)}
+          onChange={(e) =>
+            setCycleFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+          }
+          className="rounded-md border bg-background px-2 py-1"
+        >
+          <option value="all">all cycles</option>
+          {cycles.map((c) => (
+            <option key={c} value={c}>
+              cycle {c}
+            </option>
+          ))}
+        </select>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+          className="rounded-md border bg-background px-2 py-1"
+        >
+          <option value="all">all types</option>
+          <option value="contribution">contributions</option>
+          <option value="payout">payouts</option>
+        </select>
+        <select
+          value={userFilter}
+          onChange={(e) => setUserFilter(e.target.value)}
+          className="rounded-md border bg-background px-2 py-1"
+        >
+          <option value="all">all members</option>
+          {(members ?? []).map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.name || m.userId.slice(0, 6)}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1">
+          <Checkbox
+            checked={showVoided}
+            onCheckedChange={(v) => setShowVoided(v === true)}
+          />
+          show voided
+        </label>
+        <div className="ml-auto text-muted-foreground">
+          {filtered.length} of {entries.length}
+        </div>
+      </div>
+      <div className="flex max-h-96 flex-col gap-1 overflow-auto">
+        {filtered.map((p) => {
+          const voided = p.status === "voided";
+          return (
+            <div
+              key={p.id}
+              className={
+                "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-xs " +
+                (voided ? "opacity-60 line-through" : "")
+              }
+            >
+              <span className="font-mono text-muted-foreground">
+                c{p.cycleNumber}
+              </span>
+              <span
+                className={
+                  "rounded px-1.5 py-0.5 text-[10px] font-semibold " +
+                  (p.type === "payout"
+                    ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                    : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200")
+                }
+              >
+                {p.type}
+              </span>
+              <span className="flex-1 truncate">
+                {p.userName || p.userId.slice(0, 6)}
+                {p.slotId && (
+                  <span className="ml-1 text-[10px] text-muted-foreground">
+                    · slot {p.slotId.slice(0, 6)}
+                  </span>
+                )}
+              </span>
+              {p.isLate && (
+                <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                  late
+                </span>
+              )}
+              {voided && (
+                <span className="rounded bg-red-100 px-1 text-[10px] text-red-800 dark:bg-red-950 dark:text-red-200">
+                  voided
+                </span>
+              )}
+              <span className="font-mono">
+                {currency} {p.amount.toLocaleString()}
+              </span>
+              {p.paidAt && (
+                <span className="text-[10px] text-muted-foreground">
+                  {p.paidAt.toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </span>
+              )}
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="text-xs text-muted-foreground">
+            No payments match the current filters.
+          </div>
+        )}
       </div>
     </div>
   );
