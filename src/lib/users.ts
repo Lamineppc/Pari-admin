@@ -337,31 +337,6 @@ const generateResetLinkFn = httpsCallable<
   { link: string; email: string }
 >(firebaseFunctions, "generatePasswordResetLink");
 
-export type AuthProfile = {
-  exists: boolean;
-  email?: string | null;
-  emailVerified?: boolean;
-  phoneNumber?: string | null;
-  disabled?: boolean;
-  creationTime?: string;
-  lastSignInTime?: string;
-  providers?: {
-    providerId: string;
-    email: string | null;
-    phoneNumber: string | null;
-  }[];
-};
-
-const getUserAuthProfileFn = httpsCallable<{ uid: string }, AuthProfile>(
-  firebaseFunctions,
-  "getUserAuthProfile",
-);
-
-export async function getUserAuthProfile(uid: string): Promise<AuthProfile> {
-  const res = await getUserAuthProfileFn({ uid });
-  return res.data;
-}
-
 /// Revokes every active refresh token for [uid] via the server-side
 /// forceSignOut callable. The Admin SDK path is the only way to
 /// invalidate someone else's sessions; the Firebase JS SDK on the
