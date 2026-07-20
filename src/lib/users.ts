@@ -321,6 +321,57 @@ export async function forceSignOutUser(uid: string): Promise<void> {
   });
 }
 
+export type UserContact = {
+  phone: string | null;
+  phoneVerified: boolean;
+  whatsapp: string | null;
+  whatsappVerified: boolean;
+};
+
+/// Live stream of a user's private contact subdoc. The subcollection
+/// path is users/{uid}/private/contact — same as the mobile
+/// upsertUserProfile writes. Super-admin can read it via the
+/// isSuperAdmin() rule; returns nulls when the doc doesn't exist yet.
+export function subscribeUserContact(
+  uid: string,
+  cb: (c: UserContact) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, "users", uid, "private", "contact"),
+    (snap) => {
+      const d = snap.data() ?? {};
+      cb({
+        phone: (d.phone as string | undefined) ?? null,
+        phoneVerified: d.phoneVerified === true,
+        whatsapp: (d.whatsapp as string | undefined) ?? null,
+        whatsappVerified: d.whatsappVerified === true,
+      });
+    },
+    (err) => onError?.(err),
+  );
+}
+
+/// Flip verified state on either the phone or whatsapp field of
+/// [uid]'s private contact subdoc. Super-admin override — the mobile
+/// flow only sets these true via OTP.
+export async function setContactVerified(
+  uid: string,
+  kind: "phone" | "whatsapp",
+  verified: boolean,
+): Promise<void> {
+  const ref = doc(firestore, "users", uid, "private", "contact");
+  const field = kind === "phone" ? "phoneVerified" : "whatsappVerified";
+  await setDoc(ref, { [field]: verified }, { merge: true });
+  await writeAudit({
+    action: "set_contact_verified",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { kind, verified },
+  });
+}
+
 /// Sends the Firebase Auth password reset email to [email]. Uses the
 /// signed-in super-admin's Firebase Auth client — Firebase throttles
 /// per-project on abuse, and the email lands in the target's inbox

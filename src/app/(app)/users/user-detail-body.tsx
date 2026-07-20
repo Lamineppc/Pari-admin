@@ -34,13 +34,16 @@ import {
   hardDeleteUser,
   notifyUser,
   sendPasswordReset,
+  setContactVerified,
   setUserBan,
   setUserIsTestAccount,
+  subscribeUserContact,
   subscribeUserGroups,
   subscribeUserPayments,
   updateUserProfile,
   type BanType,
   type PlatformUser,
+  type UserContact,
   type UserGroupMembership,
   type UserPaymentEntry,
 } from "@/lib/users";
@@ -80,6 +83,16 @@ export function UserDetailBody({
   const [topUpAmount, setTopUpAmount] = useState("50000");
   const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
+  const [contact, setContact] = useState<UserContact | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeUserContact(
+      user.uid,
+      (c) => setContact(c),
+      () => setContact({ phone: null, phoneVerified: false, whatsapp: null, whatsappVerified: false }),
+    );
+    return unsub;
+  }, [user.uid]);
 
   useEffect(() => {
     const unsub = subscribeUserGroups(user.uid, setGroups, () => setGroups([]));
@@ -484,6 +497,9 @@ export function UserDetailBody({
       )}
 
       <Separator />
+      <UserContactPanel uid={user.uid} contact={contact} />
+
+      <Separator />
       <UserGroupsPanel groups={groups} />
 
       <Separator />
@@ -683,6 +699,106 @@ function EditProfileDialog({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function UserContactPanel({
+  uid,
+  contact,
+}: {
+  uid: string;
+  contact: UserContact | null;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function toggle(kind: "phone" | "whatsapp", next: boolean) {
+    setBusy(kind);
+    try {
+      await setContactVerified(uid, kind, next);
+      toast.success(
+        `${kind === "phone" ? "Phone" : "WhatsApp"} ${next ? "verified" : "unverified"}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Contact
+      </div>
+      {contact === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {contact && (
+        <div className="flex flex-col gap-2">
+          <ContactRow
+            label="Phone"
+            value={contact.phone}
+            verified={contact.phoneVerified}
+            busy={busy === "phone"}
+            onToggle={() => toggle("phone", !contact.phoneVerified)}
+          />
+          <ContactRow
+            label="WhatsApp"
+            value={contact.whatsapp}
+            verified={contact.whatsappVerified}
+            busy={busy === "whatsapp"}
+            onToggle={() => toggle("whatsapp", !contact.whatsappVerified)}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ContactRow({
+  label,
+  value,
+  verified,
+  busy,
+  onToggle,
+}: {
+  label: string;
+  value: string | null;
+  verified: boolean;
+  busy: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
+      <span className="w-20 text-xs text-muted-foreground">{label}</span>
+      <span className="flex-1 truncate font-mono text-xs">
+        {value ?? "—"}
+      </span>
+      {verified ? (
+        <Badge
+          variant="outline"
+          className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+        >
+          verified
+        </Badge>
+      ) : (
+        <Badge variant="outline" className="text-[10px]">
+          unverified
+        </Badge>
+      )}
+      {value && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-fit"
+          disabled={busy}
+          onClick={onToggle}
+        >
+          {verified ? "Mark unverified" : "Mark verified"}{" "}
+          <ChevronRight />
+        </Button>
+      )}
     </div>
   );
 }
