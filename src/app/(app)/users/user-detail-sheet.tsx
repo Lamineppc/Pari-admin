@@ -18,12 +18,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   exitSimulationEnvironment,
+  forceSignOutUser,
+  hardDeleteUser,
   setUserBan,
   setUserIsTestAccount,
   type BanType,
   type PlatformUser,
 } from "@/lib/users";
-import { LogOut } from "lucide-react";
+import { LogOut, Trash2 } from "lucide-react";
 import {
   mockPaymentProvider,
   userWalletId,
@@ -42,7 +44,14 @@ export function UserDetailSheet({
 }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<
-    BanType | "restore" | "topup" | "toggle-test" | "exit-sim" | null
+    | BanType
+    | "restore"
+    | "topup"
+    | "toggle-test"
+    | "exit-sim"
+    | "force-signout"
+    | "hard-delete"
+    | null
   >(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
@@ -105,6 +114,52 @@ export function UserDetailSheet({
           ? `Removed from ${n} mock group(s) and reset to a real account.`
           : "Reset to a real account. No mock-group memberships found.",
       );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyForceSignOut() {
+    if (!user) return;
+    if (
+      !window.confirm(
+        `Revoke every active session for ${user.name || user.email}? The next backend call from their app will fail auth and force them to sign in again.`,
+      )
+    )
+      return;
+    setBusy("force-signout");
+    try {
+      await forceSignOutUser(user.uid);
+      toast.success("All sessions revoked.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyHardDelete() {
+    if (!user) return;
+    if (
+      !window.confirm(
+        `HARD-DELETE ${user.name || user.email} (${user.uid})?\n\nRemoves the Firestore user doc, private/contact subdoc, and Firebase Auth account. Group memberships and past payments stay as historical references. This cannot be undone.`,
+      )
+    )
+      return;
+    const reason = window.prompt(
+      "Reason for hard-delete (recorded in the audit trail):",
+      "",
+    );
+    if (reason === null) return;
+    setBusy("hard-delete");
+    try {
+      await hardDeleteUser(user.uid, reason.trim() || undefined);
+      toast.success("User hard-deleted.");
+      onOpenChange(false);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(msg);
@@ -251,6 +306,43 @@ export function UserDetailSheet({
 
           {!isSelf && (
             <>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Session
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Force sign-out revokes every active refresh token. The user
+                  stays in Firestore and can sign back in normally; existing
+                  sessions on their devices die on the next backend call.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={busy !== null}
+                  onClick={applyForceSignOut}
+                >
+                  <LogOut /> Force sign-out
+                </Button>
+              </div>
+              <Separator />
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Danger zone
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Hard-delete removes the Firestore user doc, the private
+                  contact subdoc, and the Firebase Auth account. Historical
+                  references (group memberships, payments) stay put so audit
+                  trails are preserved.
+                </p>
+                <Button
+                  variant="destructive"
+                  disabled={busy !== null}
+                  onClick={applyHardDelete}
+                >
+                  <Trash2 /> Hard-delete account
+                </Button>
+              </div>
               <Separator />
               <div className="flex flex-col gap-2">
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

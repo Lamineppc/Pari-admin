@@ -57,6 +57,8 @@ export type AuditAction =
   | "suspend_store"
   | "reinstate_store"
   | "backfill_created_at"
+  | "force_sign_out"
+  | "hard_delete_user"
   | "set_member_role"
   | "swap_member_positions"
   | "kick_member"

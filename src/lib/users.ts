@@ -15,7 +15,8 @@ import {
   doc,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import { firebaseAuth, firestore } from "./firebase";
+import { httpsCallable } from "firebase/functions";
+import { firebaseAuth, firebaseFunctions, firestore } from "./firebase";
 import { writeAudit } from "./audit";
 
 // Mirrors lib/models/platform_user.dart on mobile.
@@ -150,6 +151,50 @@ export async function backfillMissingCreatedAt(): Promise<number> {
     after: { count: missing.length },
   });
   return missing.length;
+}
+
+// ── Cloud Function callables ───────────────────────────────────────────────
+
+const forceSignOutFn = httpsCallable<{ uid: string }, { ok: boolean }>(
+  firebaseFunctions,
+  "forceSignOut",
+);
+const hardDeleteUserFn = httpsCallable<
+  { uid: string; reason?: string },
+  { ok: boolean }
+>(firebaseFunctions, "hardDeleteUser");
+
+/// Revokes every active refresh token for [uid] via the server-side
+/// forceSignOut callable. The Admin SDK path is the only way to
+/// invalidate someone else's sessions; the Firebase JS SDK on the
+/// panel side can only sign the caller out. Client-side audit still
+/// runs so the panel's audit log records the intent even if the
+/// callable was already logged separately.
+export async function forceSignOutUser(uid: string): Promise<void> {
+  await forceSignOutFn({ uid });
+  await writeAudit({
+    action: "force_sign_out",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { uid },
+  });
+}
+
+/// Hard-deletes [uid]: revoke tokens, delete Firestore user doc +
+/// private/contact, then delete the Firebase Auth account. Server-side
+/// enforces the order and rejects self-delete. Optional [reason] is
+/// stored in the server-side audit entry.
+export async function hardDeleteUser(uid: string, reason?: string): Promise<void> {
+  await hardDeleteUserFn({ uid, reason });
+  await writeAudit({
+    action: "hard_delete_user",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    reason,
+    after: { uid },
+  });
 }
 
 export async function setUserIsTestAccount(uid: string, isTestAccount: boolean): Promise<void> {
