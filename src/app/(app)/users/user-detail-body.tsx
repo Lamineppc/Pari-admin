@@ -6,6 +6,7 @@ import {
   Beaker,
   Bell,
   ChevronRight,
+  Copy,
   KeyRound,
   LogOut,
   Pencil,
@@ -31,6 +32,7 @@ import {
 import {
   exitSimulationEnvironment,
   forceSignOutUser,
+  generatePasswordResetLink,
   hardDeleteUser,
   notifyUser,
   sendPasswordReset,
@@ -230,6 +232,19 @@ export function UserDetailBody({
     }
   }
 
+  async function applyCopyResetLink() {
+    setBusy("reset-pw");
+    try {
+      const { link, email } = await generatePasswordResetLink(user.uid);
+      await navigator.clipboard.writeText(link);
+      toast.success(`Reset link for ${email} copied to clipboard.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function applyResetPassword() {
     if (!user.email) {
       toast.error("User has no email on file.");
@@ -367,6 +382,15 @@ export function UserDetailBody({
             onClick={applyResetPassword}
           >
             <KeyRound /> Send password reset email <ChevronRight />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            disabled={busy !== null}
+            onClick={applyCopyResetLink}
+          >
+            <Copy /> Copy reset link <ChevronRight />
           </Button>
         </div>
       )}

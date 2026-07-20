@@ -61,6 +61,7 @@ export type AuditAction =
   | "hard_delete_user"
   | "create_user"
   | "enroll_member"
+  | "generate_password_reset_link"
   | "send_password_reset"
   | "update_user_profile"
   | "notify_user"

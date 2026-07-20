@@ -332,6 +332,10 @@ const createUserFn = httpsCallable<
   { email: string; name?: string; password?: string },
   { uid: string }
 >(firebaseFunctions, "createUserAsSuperAdmin");
+const generateResetLinkFn = httpsCallable<
+  { uid: string },
+  { link: string; email: string }
+>(firebaseFunctions, "generatePasswordResetLink");
 
 /// Revokes every active refresh token for [uid] via the server-side
 /// forceSignOut callable. The Admin SDK path is the only way to
@@ -399,6 +403,24 @@ export async function setContactVerified(
     test: false,
     after: { kind, verified },
   });
+}
+
+/// Generates a Firebase Auth reset link (server-side) without
+/// emailing it — super-admin is responsible for delivery (WhatsApp,
+/// in-person, etc.). Returns { link, email } so the caller can also
+/// display the email the link was minted for as a sanity check.
+export async function generatePasswordResetLink(
+  uid: string,
+): Promise<{ link: string; email: string }> {
+  const res = await generateResetLinkFn({ uid });
+  await writeAudit({
+    action: "generate_password_reset_link",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { email: res.data.email },
+  });
+  return res.data;
 }
 
 /// Sends the Firebase Auth password reset email to [email]. Uses the
