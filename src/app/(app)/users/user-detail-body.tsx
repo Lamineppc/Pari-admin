@@ -312,6 +312,8 @@ export function UserDetailBody({
         <Field label="Username" value={user.username ?? "—"} />
         <Field label="Location" value={location || "—"} />
         <Field label="uid" value={user.uid} mono />
+        <Field label="Member since" value={fmtDate(user.createdAt)} />
+        <Field label="Last active" value={fmtRelative(user.lastActiveAt)} />
       </div>
 
       {!isSelf && (
@@ -925,6 +927,32 @@ function UserPaymentsPanel({
       )}
     </section>
   );
+}
+
+function fmtDate(d: Date | null): string {
+  if (!d) return "—";
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function fmtRelative(d: Date | null): string {
+  if (!d) return "—";
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d ago`;
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function Field({

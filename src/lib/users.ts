@@ -39,6 +39,8 @@ export type PlatformUser = {
   // groups; real accounts can't. Only the super admin can flip this
   // flag. See docs/mock_money.md in the mobile repo.
   isTestAccount: boolean;
+  createdAt: Date | null;
+  lastActiveAt: Date | null;
 };
 
 function toUser(snap: QueryDocumentSnapshot): PlatformUser {
@@ -54,6 +56,8 @@ function toUser(snap: QueryDocumentSnapshot): PlatformUser {
     state: (d.state as string | undefined) ?? null,
     country: (d.country as string | undefined) ?? null,
     isTestAccount: (d.isTestAccount as boolean | undefined) ?? false,
+    createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
+    lastActiveAt: (d.lastActiveAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
 
@@ -199,6 +203,9 @@ export function subscribeUser(
         state: (d.state as string | undefined) ?? null,
         country: (d.country as string | undefined) ?? null,
         isTestAccount: (d.isTestAccount as boolean | undefined) ?? false,
+        createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
+        lastActiveAt:
+          (d.lastActiveAt as Timestamp | undefined)?.toDate() ?? null,
       });
     },
     (err) => onError?.(err),
