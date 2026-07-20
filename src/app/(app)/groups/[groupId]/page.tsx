@@ -743,7 +743,11 @@ export default function GroupDetailPage() {
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Recent ledger
         </div>
-        <LedgerList entries={ledger} currency={group.currency} />
+        <LedgerList
+          entries={ledger}
+          currency={group.currency}
+          payments={payments}
+        />
       </div>
 
       <Separator />
@@ -2020,9 +2024,11 @@ const LEDGER_STYLES: Record<LedgerKind, string> = {
 function LedgerList({
   entries,
   currency,
+  payments,
 }: {
   entries: LedgerEntry[] | null;
   currency: string;
+  payments: PaymentEntry[] | null;
 }) {
   if (entries === null) {
     return <div className="text-xs text-muted-foreground">Loading ledger…</div>;
@@ -2034,34 +2040,62 @@ function LedgerList({
       </div>
     );
   }
+  // Ledger entries are immutable — voiding a payment doesn't rewrite
+  // them. Cross-reference paymentId against the payments stream so we
+  // can decorate a ledger row when the payment it points at was later
+  // voided, keeping the audit trail readable without altering data.
+  const voidedPaymentIds = new Set(
+    (payments ?? [])
+      .filter((p) => p.status === "voided")
+      .map((p) => p.id),
+  );
   return (
     <div className="flex flex-col gap-1.5">
-      {entries.map((e) => (
-        <div
-          key={e.id}
-          className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2"
-        >
-          <div className="flex flex-1 flex-col gap-0.5 min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={LEDGER_STYLES[e.kind]}>
-                {e.kind}
-              </Badge>
-              <span className="text-xs text-muted-foreground">cycle {e.cycleNumber}</span>
-            </div>
-            <div className="truncate text-xs text-muted-foreground" title={e.userId}>
-              {e.userId}
-            </div>
-            {e.note && (
-              <div className="truncate text-xs italic text-muted-foreground/80" title={e.note}>
-                {e.note}
+      <div className="text-[10px] text-muted-foreground">
+        Newest 25 entries. Older history stays queryable via ledger export.
+      </div>
+      {entries.map((e) => {
+        const voided = e.paymentId != null && voidedPaymentIds.has(e.paymentId);
+        return (
+          <div
+            key={e.id}
+            className={
+              "flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 " +
+              (voided ? "opacity-60" : "")
+            }
+          >
+            <div className="flex flex-1 flex-col gap-0.5 min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className={LEDGER_STYLES[e.kind]}>
+                  {e.kind}
+                </Badge>
+                <span className="text-xs text-muted-foreground">cycle {e.cycleNumber}</span>
+                {voided && (
+                  <span className="rounded bg-red-100 px-1 text-[10px] text-red-800 dark:bg-red-950 dark:text-red-200">
+                    payment voided
+                  </span>
+                )}
               </div>
-            )}
+              <div className="truncate text-xs text-muted-foreground" title={e.userId}>
+                {e.userId}
+              </div>
+              {e.note && (
+                <div className="truncate text-xs italic text-muted-foreground/80" title={e.note}>
+                  {e.note}
+                </div>
+              )}
+            </div>
+            <div
+              className={
+                "tabular-nums text-sm font-medium " +
+                (voided ? "line-through" : "")
+              }
+            >
+              {currency} {e.amount.toLocaleString()}
+            </div>
           </div>
-          <div className="tabular-nums text-sm font-medium">
-            {currency} {e.amount.toLocaleString()}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
