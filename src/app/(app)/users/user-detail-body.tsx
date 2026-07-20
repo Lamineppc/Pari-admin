@@ -33,6 +33,7 @@ import {
   exitSimulationEnvironment,
   forceSignOutUser,
   generatePasswordResetLink,
+  getUserAuthProfile,
   hardDeleteUser,
   notifyUser,
   sendPasswordReset,
@@ -50,6 +51,7 @@ import {
   updateUserProfile,
   type BanType,
   type PlatformUser,
+  type AuthProfile,
   type SupportMessage,
   type UserContact,
   type UserEscalationFlag,
@@ -94,6 +96,25 @@ export function UserDetailBody({
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
   const [contact, setContact] = useState<UserContact | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [authProfile, setAuthProfile] = useState<AuthProfile | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAuthProfile(null);
+    setAuthError(null);
+    getUserAuthProfile(user.uid)
+      .then((p) => {
+        if (!cancelled) setAuthProfile(p);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setAuthError(e instanceof Error ? e.message : "Failed to load.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user.uid]);
 
   useEffect(() => {
     const unsub = subscribeAuditLog(
@@ -558,6 +579,9 @@ export function UserDetailBody({
       )}
 
       <Separator />
+      <UserAuthProfilePanel profile={authProfile} error={authError} />
+
+      <Separator />
       <UserContactPanel uid={user.uid} contact={contact} />
 
       <Separator />
@@ -954,6 +978,86 @@ function UserEscalationPanel({ user }: { user: PlatformUser }) {
           )}
         </div>
       </div>
+    </section>
+  );
+}
+
+function UserAuthProfilePanel({
+  profile,
+  error,
+}: {
+  profile: AuthProfile | null;
+  error: string | null;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Firebase Auth
+      </div>
+      {error && (
+        <div className="text-xs text-red-600">Could not load: {error}</div>
+      )}
+      {!error && profile === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {profile && !profile.exists && (
+        <div className="text-xs text-amber-700">
+          No Firebase Auth record for this uid — Firestore-only orphan (hard
+          delete may have already run).
+        </div>
+      )}
+      {profile && profile.exists && (
+        <div className="flex flex-col gap-2 rounded-md border p-3 text-sm">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Field
+              label="Email verified"
+              value={profile.emailVerified ? "yes" : "no"}
+            />
+            <Field label="Phone number" value={profile.phoneNumber ?? "—"} />
+            <Field
+              label="Disabled"
+              value={profile.disabled ? "yes" : "no"}
+            />
+            <Field
+              label="Auth created"
+              value={
+                profile.creationTime
+                  ? new Date(profile.creationTime).toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })
+                  : "—"
+              }
+            />
+            <Field
+              label="Last sign-in"
+              value={
+                profile.lastSignInTime
+                  ? new Date(profile.lastSignInTime).toLocaleString(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })
+                  : "—"
+              }
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1 pt-2">
+            <span className="text-xs text-muted-foreground">Linked:</span>
+            {(profile.providers ?? []).length === 0 && (
+              <span className="text-xs italic text-muted-foreground">
+                none
+              </span>
+            )}
+            {(profile.providers ?? []).map((p) => (
+              <Badge key={p.providerId} variant="outline" className="text-[10px]">
+                {p.providerId}
+                {p.email ? ` · ${p.email}` : ""}
+                {p.phoneNumber ? ` · ${p.phoneNumber}` : ""}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
