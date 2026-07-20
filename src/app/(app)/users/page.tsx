@@ -32,6 +32,9 @@ export default function UsersPage() {
   const router = useRouter();
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<
+    "all" | "active" | "banned" | "escalated" | "test"
+  >("all");
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -54,16 +57,41 @@ export default function UsersPage() {
 
   const filtered = useMemo(() => {
     if (!users) return null;
+    const byKind = users.filter((u) => {
+      switch (filter) {
+        case "all":
+          return true;
+        case "active":
+          return u.banType === null;
+        case "banned":
+          return u.banType !== null;
+        case "escalated":
+          return u.escalationFlag !== null;
+        case "test":
+          return u.isTestAccount;
+      }
+    });
     const needle = q.trim().toLowerCase();
-    if (!needle) return users;
-    return users.filter(
+    if (!needle) return byKind;
+    return byKind.filter(
       (u) =>
         u.name.toLowerCase().includes(needle) ||
         u.email.toLowerCase().includes(needle) ||
         u.uid.toLowerCase().includes(needle) ||
         (u.username?.toLowerCase().includes(needle) ?? false),
     );
-  }, [users, q]);
+  }, [users, q, filter]);
+
+  const counts = useMemo(() => {
+    if (!users) return null;
+    return {
+      all: users.length,
+      active: users.filter((u) => u.banType === null).length,
+      banned: users.filter((u) => u.banType !== null).length,
+      escalated: users.filter((u) => u.escalationFlag !== null).length,
+      test: users.filter((u) => u.isTestAccount).length,
+    };
+  }, [users]);
 
   const allVisibleChecked =
     filtered !== null && filtered.length > 0 && filtered.every((u) => checkedIds.has(u.uid));
@@ -202,6 +230,39 @@ export default function UsersPage() {
               checkboxes for bulk actions.
             </p>
           </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {(
+            [
+              ["all", "All"],
+              ["active", "Active"],
+              ["banned", "Banned"],
+              ["escalated", "Escalated"],
+              ["test", "Test"],
+            ] as const
+          ).map(([key, label]) => {
+            const active = filter === key;
+            const count = counts?.[key];
+            return (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={
+                  "rounded-full border px-3 py-1 " +
+                  (active
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "hover:bg-muted")
+                }
+              >
+                {label}
+                {count !== undefined && (
+                  <span className="ml-1 text-[10px] opacity-70">
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <div className="relative max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
