@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Store, Users, UsersRound } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Beaker, Flag, ShieldOff, Store, Users, UsersRound } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
@@ -32,6 +33,14 @@ export default function DashboardPage() {
     };
   }, [groups]);
   const userCount = users?.length;
+  const userStats = useMemo(() => {
+    if (!users) return null;
+    return {
+      escalated: users.filter((u) => u.escalationFlag !== null).length,
+      banned: users.filter((u) => u.banType !== null).length,
+      test: users.filter((u) => u.isTestAccount).length,
+    };
+  }, [users]);
   const pendingStores = stores?.filter((s) => s.status === "pending").length;
 
   return (
@@ -74,6 +83,34 @@ export default function DashboardPage() {
           highlight={(pendingStores ?? 0) > 0}
         />
       </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          title="Escalated users"
+          value={userStats?.escalated}
+          icon={Flag}
+          tone="text-amber-600"
+          description="Users flagged for review (spam, fraud, complaint)."
+          highlight={(userStats?.escalated ?? 0) > 0}
+          href="/users?filter=escalated"
+        />
+        <StatCard
+          title="Banned users"
+          value={userStats?.banned}
+          icon={ShieldOff}
+          tone="text-red-600"
+          description="Accounts with soft or hard ban currently applied."
+          href="/users?filter=banned"
+        />
+        <StatCard
+          title="Test accounts"
+          value={userStats?.test}
+          icon={Beaker}
+          tone="text-purple-600"
+          description="Simulation-only accounts (mock money universe)."
+          href="/users?filter=test"
+        />
+      </div>
     </div>
   );
 }
@@ -85,6 +122,7 @@ function StatCard({
   tone,
   description,
   highlight = false,
+  href,
 }: {
   title: string;
   value: number | undefined;
@@ -92,9 +130,15 @@ function StatCard({
   tone: string;
   description: string;
   highlight?: boolean;
+  href?: string;
 }) {
-  return (
-    <Card className={highlight ? "border-red-300 dark:border-red-800" : undefined}>
+  const inner = (
+    <Card
+      className={
+        (highlight ? "border-red-300 dark:border-red-800 " : "") +
+        (href ? "transition hover:bg-muted/40" : "")
+      }
+    >
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         <Icon className={`h-4 w-4 ${tone}`} />
@@ -111,4 +155,5 @@ function StatCard({
       </CardContent>
     </Card>
   );
+  return href ? <Link href={href}>{inner}</Link> : inner;
 }

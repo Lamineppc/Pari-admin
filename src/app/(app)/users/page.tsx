@@ -55,6 +55,20 @@ export default function UsersPage() {
     if (sel) router.replace(`/users/${sel}`);
   }, [searchParams, router]);
 
+  // Dashboard tiles link here with ?filter=<kind> to preselect the chip.
+  useEffect(() => {
+    const f = searchParams.get("filter");
+    if (
+      f === "all" ||
+      f === "active" ||
+      f === "banned" ||
+      f === "escalated" ||
+      f === "test"
+    ) {
+      setFilter(f);
+    }
+  }, [searchParams]);
+
   const filtered = useMemo(() => {
     if (!users) return null;
     const byKind = users.filter((u) => {
