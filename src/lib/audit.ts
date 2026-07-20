@@ -67,6 +67,7 @@ export type AuditAction =
   | "set_positions_locked"
   | "resync_member_positions"
   | "heal_missing_slots"
+  | "update_group_settings"
   | "add_slot_for_member"
   | "remove_slot"
   | "reassign_slot_owner"

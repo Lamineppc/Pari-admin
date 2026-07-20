@@ -45,6 +45,7 @@ import {
   resyncMemberPositions,
   setGroupCurrentCycle,
   setPositionsLocked,
+  updateGroupSettings,
   setGroupStatus,
   setMemberRole,
   subscribeGroup,
@@ -703,6 +704,7 @@ export default function GroupDetailPage() {
         useSlots={group.useSlots}
         currentCycle={group.currentCycle ?? 0}
         positionsLocked={group.positionsLocked}
+        group={group}
       />
 
       <Separator />
@@ -742,14 +744,17 @@ function SetupPanel({
   useSlots,
   currentCycle,
   positionsLocked,
+  group,
 }: {
   groupId: string;
   useSlots: boolean;
   currentCycle: number;
   positionsLocked: boolean;
+  group: Group;
 }) {
   const [cycleInput, setCycleInput] = useState<number>(currentCycle);
   const [busy, setBusy] = useState<string | null>(null);
+  const [editingSettings, setEditingSettings] = useState(false);
 
   useEffect(() => {
     setCycleInput(currentCycle);
@@ -853,6 +858,136 @@ function SetupPanel({
             Heal missing slots
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditingSettings(true)}
+        >
+          Edit settings
+        </Button>
+      </div>
+      {editingSettings && (
+        <GroupSettingsDialog
+          group={group}
+          onClose={() => setEditingSettings(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GroupSettingsDialog({
+  group,
+  onClose,
+}: {
+  group: Group;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(group.name);
+  const [description, setDescription] = useState(group.description);
+  const [amount, setAmount] = useState<number>(group.amount);
+  const [frequency, setFrequency] = useState<string>(group.frequency);
+  const [penalty, setPenalty] = useState<number>(group.penaltyPerMissedCycle);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await updateGroupSettings(group.id, {
+        name,
+        description,
+        amount,
+        frequency,
+        penaltyPerMissedCycle: penalty,
+      });
+      toast.success("Group settings updated.");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Edit group settings</h3>
+            <p className="text-xs text-muted-foreground">
+              Super-admin override — validated inline, audit-logged.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-28 text-xs text-muted-foreground">Name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-start gap-2">
+            <label className="w-28 pt-1 text-xs text-muted-foreground">
+              Description
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-28 text-xs text-muted-foreground">
+              Amount ({group.currency})
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={amount}
+              onChange={(e) => setAmount(Number(e.target.value))}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-28 text-xs text-muted-foreground">Frequency</label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="Weekly">Weekly</option>
+              <option value="Bi-weekly">Bi-weekly</option>
+              <option value="Monthly">Monthly</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-28 text-xs text-muted-foreground">
+              Penalty / miss
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={penalty}
+              onChange={(e) => setPenalty(Number(e.target.value))}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
       </div>
     </div>
   );

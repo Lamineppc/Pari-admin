@@ -1186,6 +1186,77 @@ export async function recordPayoutAsSuperAdmin(args: {
   });
 }
 
+// ── Group settings ────────────────────────────────────────────────────────
+
+export type EditableGroupSettings = {
+  name?: string;
+  description?: string;
+  amount?: number;
+  frequency?: string;
+  penaltyPerMissedCycle?: number;
+};
+
+/// Patch mutable configuration on a group. Fields not present in
+/// [patch] are left untouched. Values are validated inline so we don't
+/// silently corrupt amount/frequency with garbage input.
+export async function updateGroupSettings(
+  groupId: string,
+  patch: EditableGroupSettings,
+): Promise<void> {
+  const ref = doc(firestore, "groups", groupId);
+  const before = await getDoc(ref);
+  if (!before.exists()) throw new Error("Group not found.");
+  const beforeData = before.data();
+
+  const write: Record<string, unknown> = {};
+  if (patch.name !== undefined) {
+    const v = patch.name.trim();
+    if (!v) throw new Error("Name cannot be empty.");
+    write.name = v;
+  }
+  if (patch.description !== undefined) {
+    write.description = patch.description.trim();
+  }
+  if (patch.amount !== undefined) {
+    if (!Number.isFinite(patch.amount) || patch.amount <= 0) {
+      throw new Error("Amount must be a positive number.");
+    }
+    write.amount = patch.amount;
+  }
+  if (patch.frequency !== undefined) {
+    const allowed = new Set(["Weekly", "Bi-weekly", "Monthly"]);
+    if (!allowed.has(patch.frequency)) {
+      throw new Error("Frequency must be Weekly, Bi-weekly, or Monthly.");
+    }
+    write.frequency = patch.frequency;
+  }
+  if (patch.penaltyPerMissedCycle !== undefined) {
+    if (
+      !Number.isFinite(patch.penaltyPerMissedCycle) ||
+      patch.penaltyPerMissedCycle < 0
+    ) {
+      throw new Error("Penalty must be a non-negative number.");
+    }
+    write.penaltyPerMissedCycle = patch.penaltyPerMissedCycle;
+  }
+  if (Object.keys(write).length === 0) return;
+
+  await updateDoc(ref, write);
+  await writeAudit({
+    action: "update_group_settings",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    before: {
+      name: beforeData.name ?? null,
+      amount: beforeData.amount ?? null,
+      frequency: beforeData.frequency ?? null,
+      penaltyPerMissedCycle: beforeData.penaltyPerMissedCycle ?? null,
+    },
+    after: write,
+  });
+}
+
 // ── Slot management ────────────────────────────────────────────────────────
 
 /// Append a solo slot at the tail owned by [userId]. Mirrors the
