@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Beaker,
+  Bell,
   ChevronRight,
+  KeyRound,
   LogOut,
+  Pencil,
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
   Trash2,
   Wallet as WalletIcon,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,10 +32,13 @@ import {
   exitSimulationEnvironment,
   forceSignOutUser,
   hardDeleteUser,
+  notifyUser,
+  sendPasswordReset,
   setUserBan,
   setUserIsTestAccount,
   subscribeUserGroups,
   subscribeUserPayments,
+  updateUserProfile,
   type BanType,
   type PlatformUser,
   type UserGroupMembership,
@@ -64,8 +71,11 @@ export function UserDetailBody({
     | "exit-sim"
     | "force-signout"
     | "hard-delete"
+    | "reset-pw"
     | null
   >(null);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topUpAmount, setTopUpAmount] = useState("50000");
   const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
@@ -190,6 +200,28 @@ export function UserDetailBody({
     }
   }
 
+  async function applyResetPassword() {
+    if (!user.email) {
+      toast.error("User has no email on file.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Send a Firebase Auth password reset email to ${user.email}?`,
+      )
+    )
+      return;
+    setBusy("reset-pw");
+    try {
+      await sendPasswordReset(user.uid, user.email);
+      toast.success(`Reset email sent to ${user.email}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function applyToggleTest() {
     const nextValue = !user.isTestAccount;
     setBusy("toggle-test");
@@ -268,6 +300,36 @@ export function UserDetailBody({
         <Field label="Location" value={location || "—"} />
         <Field label="uid" value={user.uid} mono />
       </div>
+
+      {!isSelf && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            onClick={() => setProfileOpen(true)}
+          >
+            <Pencil /> Edit name / username <ChevronRight />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            onClick={() => setNotifyOpen(true)}
+          >
+            <Bell /> Notify user <ChevronRight />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            disabled={busy !== null}
+            onClick={applyResetPassword}
+          >
+            <KeyRound /> Send password reset email <ChevronRight />
+          </Button>
+        </div>
+      )}
 
       {isBanned && user.banReason && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/40">
@@ -473,6 +535,154 @@ export function UserDetailBody({
           </section>
         </>
       )}
+
+      {notifyOpen && (
+        <NotifyUserDialog uid={user.uid} onClose={() => setNotifyOpen(false)} />
+      )}
+      {profileOpen && (
+        <EditProfileDialog
+          user={user}
+          onClose={() => setProfileOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NotifyUserDialog({
+  uid,
+  onClose,
+}: {
+  uid: string;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  async function send() {
+    setSending(true);
+    try {
+      await notifyUser({ uid, title, body });
+      toast.success("Notification sent.");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Notify failed.");
+    } finally {
+      setSending(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Notify this user</h3>
+            <p className="text-xs text-muted-foreground">
+              Delivers one message to their private inbox.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-16 text-xs text-muted-foreground">Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Short headline"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-start gap-2">
+            <label className="w-16 pt-1 text-xs text-muted-foreground">Body</label>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={4}
+              placeholder="What do they need to know?"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={send} disabled={sending}>
+            {sending ? "Sending…" : "Send"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditProfileDialog({
+  user,
+  onClose,
+}: {
+  user: PlatformUser;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(user.name);
+  const [username, setUsername] = useState(user.username ?? "");
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true);
+    try {
+      await updateUserProfile(user.uid, { name, username });
+      toast.success("Profile updated.");
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Edit profile</h3>
+            <p className="text-xs text-muted-foreground">
+              Super-admin override for display name and username.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-20 text-xs text-muted-foreground">Name</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-20 text-xs text-muted-foreground">Username</label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="(leave blank to clear)"
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import {
   doc,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
+import { sendPasswordResetEmail } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { firebaseAuth, firebaseFunctions, firestore } from "./firebase";
 import { writeAudit } from "./audit";
@@ -317,6 +318,89 @@ export async function forceSignOutUser(uid: string): Promise<void> {
     targetId: uid,
     test: false,
     after: { uid },
+  });
+}
+
+/// Sends the Firebase Auth password reset email to [email]. Uses the
+/// signed-in super-admin's Firebase Auth client — Firebase throttles
+/// per-project on abuse, and the email lands in the target's inbox
+/// with the standard reset link. No custom template unless a hosted
+/// action URL is configured in the Firebase console.
+export async function sendPasswordReset(
+  uid: string,
+  email: string,
+): Promise<void> {
+  if (!email) throw new Error("User has no email on file.");
+  await sendPasswordResetEmail(firebaseAuth, email);
+  await writeAudit({
+    action: "send_password_reset",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { email },
+  });
+}
+
+/// Patches [uid]'s user doc with new [name] and/or [username]. Empty
+/// strings are treated as "leave unchanged" — pass explicit values
+/// only for fields you want to write. Rejects an empty name (Firebase
+/// downstream requires a display name).
+export async function updateUserProfile(
+  uid: string,
+  patch: { name?: string; username?: string },
+): Promise<void> {
+  const write: Record<string, unknown> = {};
+  if (patch.name !== undefined) {
+    const v = patch.name.trim();
+    if (!v) throw new Error("Name cannot be empty.");
+    write.name = v;
+  }
+  if (patch.username !== undefined) {
+    const v = patch.username.trim().toLowerCase();
+    if (v) write.username = v;
+    else write.username = null;
+  }
+  if (Object.keys(write).length === 0) return;
+  const before = await getDoc(doc(firestore, "users", uid));
+  const beforeData = before.data() ?? {};
+  await updateDoc(doc(firestore, "users", uid), write);
+  await writeAudit({
+    action: "update_user_profile",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    before: { name: beforeData.name ?? null, username: beforeData.username ?? null },
+    after: write,
+  });
+}
+
+/// Notify a single user via their private inbox. Same shape as
+/// broadcastToGroupMembers but scoped to one uid. Type defaults to
+/// "admin_notice" so mobile can route it distinctly from group
+/// broadcasts.
+export async function notifyUser(args: {
+  uid: string;
+  title: string;
+  body: string;
+  type?: string;
+}): Promise<void> {
+  const title = args.title.trim();
+  const body = args.body.trim();
+  if (!title) throw new Error("Title required.");
+  if (!body) throw new Error("Body required.");
+  await addDoc(collection(firestore, "users", args.uid, "notifications"), {
+    type: args.type ?? "admin_notice",
+    title,
+    body,
+    isRead: false,
+    createdAt: serverTimestamp(),
+  });
+  await writeAudit({
+    action: "notify_user",
+    targetType: "user",
+    targetId: args.uid,
+    test: false,
+    after: { title, body },
   });
 }
 
