@@ -34,6 +34,7 @@ import {
   securedPhase,
   addSlotForMember,
   cancelPendingSplit,
+  enrollMemberInGroup,
   forceAcceptSplit,
   healMissingSlots,
   kickMember,
@@ -80,6 +81,7 @@ import {
 } from "@/lib/simulator";
 import { refillMemberWallets, trashMockGroup } from "@/lib/mock-groups";
 import { broadcastToGroupMembers } from "@/lib/notifications";
+import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const PHASE_LABELS: Record<string, string> = {
@@ -735,6 +737,7 @@ export default function GroupDetailPage() {
           defaultAmount={group.amount ?? 0}
           slots={slots}
         />
+        <EnrollMemberButton groupId={group.id} members={members} />
       </div>
 
       <Separator />
@@ -1256,6 +1259,139 @@ function GroupSettingsDialog({
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Enroll a user into this group ──────────────────────────────────────────
+
+function EnrollMemberButton({
+  groupId,
+  members,
+}: {
+  groupId: string;
+  members: MemberSummary[] | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={() => setOpen(true)}
+      >
+        + Enroll member
+      </Button>
+      {open && (
+        <EnrollMemberDialog
+          groupId={groupId}
+          existingUids={new Set((members ?? []).map((m) => m.userId))}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function EnrollMemberDialog({
+  groupId,
+  existingUids,
+  onClose,
+}: {
+  groupId: string;
+  existingUids: Set<string>;
+  onClose: () => void;
+}) {
+  const [users, setUsers] = useState<PlatformUser[] | null>(null);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeUsers(setUsers, () => setUsers([]));
+    return unsub;
+  }, []);
+
+  const filtered = (users ?? [])
+    .filter((u) => !existingUids.has(u.uid) && u.banType !== "hard")
+    .filter((u) => {
+      const needle = q.trim().toLowerCase();
+      if (!needle) return true;
+      return (
+        u.name.toLowerCase().includes(needle) ||
+        u.email.toLowerCase().includes(needle) ||
+        u.uid.toLowerCase().includes(needle) ||
+        (u.username?.toLowerCase().includes(needle) ?? false)
+      );
+    })
+    .slice(0, 25);
+
+  async function enroll(u: PlatformUser) {
+    setBusy(u.uid);
+    try {
+      await enrollMemberInGroup({
+        groupId,
+        userId: u.uid,
+        name: u.name || u.email,
+        email: u.email,
+      });
+      toast.success(`${u.name || u.email} enrolled.`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Enroll failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Enroll a member</h3>
+            <p className="text-xs text-muted-foreground">
+              Adds the picked user to this group at the tail of the rotation.
+              Hard-banned users and existing members are hidden.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by name, email, username, uid…"
+          className="mb-2 rounded-md border bg-background px-2 py-1 text-sm"
+        />
+        <div className="flex-1 overflow-auto rounded-md border">
+          {users === null && (
+            <div className="p-3 text-xs text-muted-foreground">Loading…</div>
+          )}
+          {users && filtered.length === 0 && (
+            <div className="p-3 text-xs text-muted-foreground">
+              No matching users.
+            </div>
+          )}
+          {filtered.map((u) => (
+            <button
+              key={u.uid}
+              onClick={() => enroll(u)}
+              disabled={busy === u.uid}
+              className="flex w-full items-center gap-2 border-b px-2 py-1.5 text-left text-xs hover:bg-muted/50 disabled:opacity-50"
+            >
+              <span className="flex-1 truncate">
+                {u.name || u.email || u.uid.slice(0, 8)}
+              </span>
+              <span className="truncate text-muted-foreground">{u.email}</span>
+              {busy === u.uid && (
+                <span className="text-[10px]">enrolling…</span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
     </div>

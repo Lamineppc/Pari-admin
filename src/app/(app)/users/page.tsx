@@ -8,6 +8,7 @@ import {
   Flag,
   FlagOff,
   LogOut,
+  Plus,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -30,6 +31,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  createUserAsSuperAdmin,
   forceSignOutUser,
   notifyUser,
   setUserBan,
@@ -57,6 +59,7 @@ export default function UsersPage() {
   const [busy, setBusy] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -439,6 +442,13 @@ export default function UsersPage() {
           >
             <Download /> Export CSV
           </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus /> New user
+          </Button>
         </div>
       </header>
 
@@ -621,6 +631,15 @@ export default function UsersPage() {
         </Button>
       </BulkActionBar>
 
+      {createOpen && (
+        <CreateUserDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={(uid) => {
+            setCreateOpen(false);
+            router.push(`/users/${uid}`);
+          }}
+        />
+      )}
       {escalateOpen && (
         <BulkEscalateDialog
           count={
@@ -641,6 +660,102 @@ export default function UsersPage() {
           busy={busy}
         />
       )}
+    </div>
+  );
+}
+
+function CreateUserDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (uid: string) => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!email.trim()) {
+      toast.error("Email required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const uid = await createUserAsSuperAdmin({
+        email: email.trim(),
+        name: name.trim() || undefined,
+        password: password.trim() || undefined,
+      });
+      toast.success(
+        password.trim()
+          ? "User created with the password you provided."
+          : "User created. Send a password reset email from their detail page.",
+      );
+      onCreated(uid);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Create user failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">Create user</h3>
+            <p className="text-xs text-muted-foreground">
+              Provisions the Firebase Auth account and stamps the Firestore
+              user doc. Leave password blank to have the panel auto-generate
+              one and email the user a reset link on their detail page.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Email</label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="member@example.com"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Name</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Display name"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">
+              Password
+            </label>
+            <Input
+              type="text"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="(auto-generate if blank)"
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy || !email.trim()}>
+            {busy ? "Creating…" : "Create"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

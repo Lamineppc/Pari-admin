@@ -328,6 +328,10 @@ const hardDeleteUserFn = httpsCallable<
   { uid: string; reason?: string },
   { ok: boolean }
 >(firebaseFunctions, "hardDeleteUser");
+const createUserFn = httpsCallable<
+  { email: string; name?: string; password?: string },
+  { uid: string }
+>(firebaseFunctions, "createUserAsSuperAdmin");
 
 /// Revokes every active refresh token for [uid] via the server-side
 /// forceSignOut callable. The Admin SDK path is the only way to
@@ -668,6 +672,26 @@ export async function notifyUser(args: {
     test: false,
     after: { title, body },
   });
+}
+
+/// Provisions a new user via the Cloud Function (Firebase Auth
+/// account + Firestore user doc). Returns the new uid so callers can
+/// navigate straight to the detail page.
+export async function createUserAsSuperAdmin(args: {
+  email: string;
+  name?: string;
+  password?: string;
+}): Promise<string> {
+  const res = await createUserFn(args);
+  const uid = res.data.uid;
+  await writeAudit({
+    action: "create_user",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { email: args.email, name: args.name ?? "" },
+  });
+  return uid;
 }
 
 /// Hard-deletes [uid]: revoke tokens, delete Firestore user doc +

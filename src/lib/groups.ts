@@ -718,6 +718,68 @@ export function subscribeGroupMembers(
   );
 }
 
+/// Enroll a user into [groupId] on behalf of super-admin. Appends at
+/// the tail of the rotation, writes the member doc, bumps
+/// memberCount, and — for useSlots groups — adds a solo slot mirroring
+/// addSlotForMember. Rejects if the user is already a member.
+export async function enrollMemberInGroup(args: {
+  groupId: string;
+  userId: string;
+  name: string;
+  email: string;
+}): Promise<void> {
+  const { groupId, userId, name, email } = args;
+  const groupRef = doc(firestore, "groups", groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) throw new Error("Group not found.");
+  const g = groupSnap.data();
+
+  const memberRef = doc(firestore, "groups", groupId, "members", userId);
+  const existing = await getDoc(memberRef);
+  if (existing.exists()) throw new Error("Already a member of this group.");
+
+  const membersCol = collection(firestore, "groups", groupId, "members");
+  const membersSnap = await getDocs(membersCol);
+  const position = membersSnap.docs.length + 1;
+  const currentCycle = Number(g.currentCycle ?? 1);
+
+  const batch = writeBatch(firestore);
+  batch.set(memberRef, {
+    userId,
+    name,
+    email,
+    role: "member",
+    position,
+    joinedAt: serverTimestamp(),
+    joinCycle: currentCycle,
+  });
+  batch.update(groupRef, {
+    memberCount: (Number(g.memberCount ?? 0) || membersSnap.docs.length) + 1,
+    memberIds: arrayUnion(userId),
+  });
+  if (g.useSlots === true) {
+    const slotsCol = collection(firestore, "groups", groupId, "slots");
+    const slotsSnap = await getDocs(slotsCol);
+    const slotRef = doc(slotsCol);
+    batch.set(slotRef, {
+      position: slotsSnap.docs.length + 1,
+      joinCycle: currentCycle,
+      owners: [{ userId, name, share: 1.0 }],
+      payoutCycle: null,
+      pendingSecondary: null,
+      addedByAdmin: true,
+    });
+  }
+  await batch.commit();
+  await writeAudit({
+    action: "enroll_member",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: { userId, position },
+  });
+}
+
 /// Super-admin role override on a specific member. No money implication;
 /// just flips the `role` field. Downgrading the current admin without
 /// promoting someone else first would leave the group orphaned, so callers

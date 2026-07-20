@@ -59,6 +59,8 @@ export type AuditAction =
   | "backfill_created_at"
   | "force_sign_out"
   | "hard_delete_user"
+  | "create_user"
+  | "enroll_member"
   | "send_password_reset"
   | "update_user_profile"
   | "notify_user"
