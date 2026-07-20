@@ -34,15 +34,18 @@ import {
   hardDeleteUser,
   notifyUser,
   sendPasswordReset,
+  sendSupportMessage,
   setContactVerified,
   setUserBan,
   setUserIsTestAccount,
+  subscribeSupportMessages,
   subscribeUserContact,
   subscribeUserGroups,
   subscribeUserPayments,
   updateUserProfile,
   type BanType,
   type PlatformUser,
+  type SupportMessage,
   type UserContact,
   type UserGroupMembership,
   type UserPaymentEntry,
@@ -518,6 +521,9 @@ export function UserDetailBody({
       <UserPaymentsPanel payments={payments} />
 
       <Separator />
+      <UserSupportPanel uid={user.uid} currentUid={currentUid} />
+
+      <Separator />
       <UserAuditPanel entries={audit} />
 
       {user.isTestAccount && (
@@ -938,6 +944,100 @@ function UserPaymentsPanel({
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+function UserSupportPanel({
+  uid,
+  currentUid,
+}: {
+  uid: string;
+  currentUid: string | null;
+}) {
+  const [messages, setMessages] = useState<SupportMessage[] | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeSupportMessages(
+      uid,
+      setMessages,
+      30,
+      () => setMessages([]),
+    );
+    return unsub;
+  }, [uid]);
+
+  async function send() {
+    setSending(true);
+    try {
+      await sendSupportMessage(uid, draft);
+      setDraft("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Send failed.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Support conversation ({messages?.length ?? "…"})
+      </div>
+      <div className="flex max-h-72 flex-col gap-1 overflow-auto rounded-md border bg-muted/20 p-2">
+        {messages === null && (
+          <div className="text-xs text-muted-foreground">Loading…</div>
+        )}
+        {messages && messages.length === 0 && (
+          <div className="text-xs text-muted-foreground">
+            No support messages yet. Send one below.
+          </div>
+        )}
+        {messages?.map((m) => {
+          const mine = m.senderId === currentUid;
+          return (
+            <div
+              key={m.id}
+              className={
+                "flex flex-col rounded-md px-2 py-1.5 text-sm " +
+                (mine
+                  ? "self-end bg-primary/10 text-right"
+                  : "self-start bg-background border")
+              }
+            >
+              <span className="whitespace-pre-wrap">{m.text}</span>
+              {m.createdAt && (
+                <span className="text-[10px] text-muted-foreground">
+                  {mine ? "you · " : ""}
+                  {m.createdAt.toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex max-w-2xl gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          placeholder="Reply to this user…"
+          className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+        />
+        <Button
+          size="sm"
+          className="w-fit"
+          disabled={sending || !draft.trim()}
+          onClick={send}
+        >
+          {sending ? "Sending…" : "Send"} <ChevronRight />
+        </Button>
+      </div>
     </section>
   );
 }

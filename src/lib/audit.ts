@@ -62,6 +62,7 @@ export type AuditAction =
   | "send_password_reset"
   | "update_user_profile"
   | "notify_user"
+  | "send_support_message"
   | "set_contact_verified"
   | "set_member_role"
   | "swap_member_positions"

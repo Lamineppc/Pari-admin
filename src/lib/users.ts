@@ -432,6 +432,86 @@ export async function updateUserProfile(
   });
 }
 
+export type SupportMessage = {
+  id: string;
+  senderId: string;
+  text: string;
+  createdAt: Date | null;
+};
+
+/// Live tail of the support_admin conversation between [uid] and the
+/// super admin. Same deterministic id (`sup_${uid}`) the mobile
+/// getOrCreateSupportAdminConversation uses so replies land in the
+/// same thread.
+export function subscribeSupportMessages(
+  uid: string,
+  cb: (messages: SupportMessage[]) => void,
+  max: number = 30,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "conversations", `sup_${uid}`, "messages"),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(
+    q,
+    (s) => {
+      const rows = s.docs.slice(0, max).map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          senderId: String(data.senderId ?? ""),
+          text: String(data.text ?? ""),
+          createdAt: (data.createdAt as Timestamp | undefined)?.toDate() ?? null,
+        };
+      });
+      cb(rows.reverse()); // oldest → newest
+    },
+    (err) => onError?.(err),
+  );
+}
+
+/// Sends a support reply from the current super-admin into [uid]'s
+/// support_admin conversation. Upserts the conversation doc with the
+/// correct participants + branded name so the mobile
+/// getOrCreateSupportAdminConversation lookup finds it.
+export async function sendSupportMessage(
+  uid: string,
+  text: string,
+): Promise<void> {
+  const t = text.trim();
+  if (!t) throw new Error("Message body required.");
+  const me = firebaseAuth.currentUser;
+  if (!me) throw new Error("Not signed in.");
+  const convId = `sup_${uid}`;
+  const convRef = doc(firestore, "conversations", convId);
+  await setDoc(
+    convRef,
+    {
+      type: "support_admin",
+      participantIds: [uid, me.uid],
+      participantNames: { [me.uid]: "Sales Team", [uid]: uid },
+      lastMessage: t.slice(0, 200),
+      lastMessageAt: serverTimestamp(),
+      lastSenderId: me.uid,
+      createdAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await addDoc(collection(convRef, "messages"), {
+    senderId: me.uid,
+    text: t,
+    createdAt: serverTimestamp(),
+  });
+  await writeAudit({
+    action: "send_support_message",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    after: { length: t.length },
+  });
+}
+
 /// Notify a single user via two paths at once: their private inbox
 /// (drives push + notification listener) and a read-only conversation
 /// with the Pari team so the message is archived and readable from
