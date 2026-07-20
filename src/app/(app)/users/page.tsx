@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bell, LogOut, Search, ShieldAlert, ShieldCheck, ShieldOff, Users, X } from "lucide-react";
+import {
+  Bell,
+  Download,
+  LogOut,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
+  Users,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -178,6 +188,57 @@ export default function UsersPage() {
     toast.success(`${label} applied to ${ok} user(s)${failed > 0 ? `, ${failed} failed` : ""}.`);
   }
 
+  function exportCsv() {
+    if (!filtered || filtered.length === 0) {
+      toast.error("Nothing to export in the current view.");
+      return;
+    }
+    const header = [
+      "uid",
+      "name",
+      "email",
+      "username",
+      "city",
+      "country",
+      "isTestAccount",
+      "banType",
+      "escalationFlag",
+      "escalationReason",
+      "createdAt",
+      "lastActiveAt",
+    ];
+    const rows = filtered.map((u) => [
+      u.uid,
+      u.name,
+      u.email,
+      u.username ?? "",
+      u.city ?? "",
+      u.country ?? "",
+      u.isTestAccount ? "true" : "false",
+      u.banType ?? "",
+      u.escalationFlag ?? "",
+      u.escalationReason ?? "",
+      u.createdAt?.toISOString() ?? "",
+      u.lastActiveAt?.toISOString() ?? "",
+    ]);
+    const esc = (s: string) =>
+      /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    const csv = [header, ...rows]
+      .map((r) => r.map((c) => esc(String(c))).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pari-users-${filter}-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${filtered.length} row(s).`);
+  }
+
   async function runBulkForceSignOut() {
     const targets = Array.from(checkedIds).filter(
       (uid) => uid !== authUser?.uid,
@@ -296,14 +357,24 @@ export default function UsersPage() {
             );
           })}
         </div>
-        <div className="relative max-w-sm">
-          <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by name, email, username, or uid…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative max-w-sm flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, email, username, or uid…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            title="Export the current view as CSV"
+          >
+            <Download /> Export CSV
+          </Button>
         </div>
       </header>
 
