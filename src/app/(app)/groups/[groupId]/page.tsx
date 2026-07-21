@@ -1968,6 +1968,12 @@ function SlotList({
               <span className="font-mono text-muted-foreground">
                 #{s.position}
               </span>
+              <span
+                className="font-mono text-[10px] text-muted-foreground/70"
+                title={s.id}
+              >
+                {s.id.slice(0, 6)}
+              </span>
               <div className="flex-1 truncate">
                 {s.owners.length === 0 ? (
                   <span className="italic text-muted-foreground">empty</span>
