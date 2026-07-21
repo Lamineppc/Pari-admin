@@ -52,8 +52,12 @@ import {
   subscribeGroup,
   subscribeGroupMembers,
   subscribeGroupPayments,
+  subscribeGroupPendingRequests,
   subscribeLedger,
   subscribeSlots,
+  approveGroupRequest,
+  cancelGroupRequest,
+  forceAcceptGroupInvitation,
   swapMemberPositions,
   takeOverAsCaretaker,
   transferOwnershipToManager,
@@ -64,6 +68,7 @@ import {
   type MemberSummary,
   type PaymentEntry,
   type SlotSummary,
+  type GroupJoinRequest,
 } from "@/lib/groups";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -128,6 +133,9 @@ export default function GroupDetailPage() {
   const [members, setMembers] = useState<MemberSummary[] | null>(null);
   const [payments, setPayments] = useState<PaymentEntry[] | null>(null);
   const [slots, setSlots] = useState<SlotSummary[] | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<
+    GroupJoinRequest[] | null
+  >(null);
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
   const [skipSet, setSkipSet] = useState<Set<string>>(new Set());
@@ -155,6 +163,16 @@ export default function GroupDetailPage() {
     if (!groupId) return;
     const unsub = subscribeGroupMembers(groupId, setMembers, () =>
       setMembers([]),
+    );
+    return unsub;
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const unsub = subscribeGroupPendingRequests(
+      groupId,
+      setPendingRequests,
+      () => setPendingRequests([]),
     );
     return unsub;
   }, [groupId]);
@@ -738,6 +756,15 @@ export default function GroupDetailPage() {
           slots={slots}
         />
         <EnrollMemberButton groupId={group.id} members={members} />
+      </div>
+
+      <Separator />
+
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Pending membership ({pendingRequests?.length ?? "…"})
+        </div>
+        <PendingRequestsList requests={pendingRequests} />
       </div>
 
       <Separator />
@@ -1394,6 +1421,157 @@ function EnrollMemberDialog({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Pending join requests / invitations ────────────────────────────────────
+
+function PendingRequestsList({
+  requests,
+}: {
+  requests: GroupJoinRequest[] | null;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function run(
+    key: string,
+    fn: () => Promise<void>,
+    successMsg: string,
+  ) {
+    setBusy(key);
+    try {
+      await fn();
+      toast.success(successMsg);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `${key} failed.`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (requests === null) {
+    return (
+      <div className="text-xs text-muted-foreground">Loading…</div>
+    );
+  }
+  if (requests.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        No pending invitations or join requests.
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      {requests.map((r) => {
+        const isAdminInvite = r.originatedBy === "admin";
+        return (
+          <div
+            key={r.id}
+            className="flex flex-col gap-1 rounded border px-2 py-1.5 text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  "rounded px-1.5 py-0.5 text-[10px] font-semibold " +
+                  (isAdminInvite
+                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                    : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200")
+                }
+              >
+                {isAdminInvite ? "admin invite" : "join request"}
+              </span>
+              <span className="flex-1 truncate font-medium">
+                {r.userName || r.userEmail || r.userId.slice(0, 8)}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {r.requestedAt
+                  ? r.requestedAt.toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "—"}
+              </span>
+            </div>
+            {r.userEmail && (
+              <div className="truncate font-mono text-[10px] text-muted-foreground">
+                {r.userEmail}
+              </div>
+            )}
+            {isAdminInvite && r.invitedByName && (
+              <div className="text-[10px] text-muted-foreground">
+                invited by {r.invitedByName}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {isAdminInvite ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `accept:${r.id}`}
+                    onClick={() =>
+                      run(
+                        `accept:${r.id}`,
+                        () => forceAcceptGroupInvitation(r),
+                        `${r.userName || "User"} enrolled.`,
+                      )
+                    }
+                  >
+                    force-accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `cancel:${r.id}`}
+                    onClick={() =>
+                      run(
+                        `cancel:${r.id}`,
+                        () => cancelGroupRequest(r),
+                        "Invitation cancelled.",
+                      )
+                    }
+                  >
+                    cancel invite
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `approve:${r.id}`}
+                    onClick={() =>
+                      run(
+                        `approve:${r.id}`,
+                        () => approveGroupRequest(r),
+                        `${r.userName || "User"} approved.`,
+                      )
+                    }
+                  >
+                    approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === `reject:${r.id}`}
+                    onClick={() =>
+                      run(
+                        `reject:${r.id}`,
+                        () => cancelGroupRequest(r),
+                        "Request rejected.",
+                      )
+                    }
+                  >
+                    reject
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

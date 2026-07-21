@@ -718,6 +718,189 @@ export function subscribeGroupMembers(
   );
 }
 
+export type GroupJoinRequest = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  /// "admin" = admin invited this user; awaiting user acceptance.
+  /// "user" (or missing) = user asked to join; awaiting admin approval.
+  originatedBy: "admin" | "user";
+  invitedBy: string | null;
+  invitedByName: string | null;
+  requestedAt: Date | null;
+};
+
+/// Live stream of every pending request under
+/// `groups/{groupId}/requests`. Covers both directions — user-initiated
+/// join requests and admin-initiated invitations — with the source
+/// flagged by `originatedBy`.
+export function subscribeGroupPendingRequests(
+  groupId: string,
+  cb: (requests: GroupJoinRequest[]) => void,
+  onError?: (e: Error) => void,
+) {
+  const q = query(
+    collection(firestore, "groups", groupId, "requests"),
+    where("status", "==", "pending"),
+  );
+  return onSnapshot(
+    q,
+    (s) =>
+      cb(
+        s.docs.map((d) => {
+          const data = d.data();
+          const originated =
+            data.originatedBy === "admin" ? "admin" : "user";
+          return {
+            id: d.id,
+            groupId: (data.groupId as string | undefined) ?? groupId,
+            groupName: String(data.groupName ?? ""),
+            userId: String(data.userId ?? ""),
+            userName: String(data.userName ?? ""),
+            userEmail: String(data.userEmail ?? ""),
+            status: (data.status as GroupJoinRequest["status"] | undefined) ??
+              "pending",
+            originatedBy: originated as "admin" | "user",
+            invitedBy: (data.invitedBy as string | undefined) ?? null,
+            invitedByName: (data.invitedByName as string | undefined) ?? null,
+            requestedAt:
+              (data.requestedAt as Timestamp | undefined)?.toDate() ?? null,
+          };
+        }),
+      ),
+    (err) => onError?.(err),
+  );
+}
+
+/// Approve a user's request to join [groupId] on behalf of super-admin.
+/// Enrolls the user via [enrollMemberInGroup] and marks the request +
+/// user-mirror docs approved. Idempotent-ish: safe to retry if the
+/// mobile approveRequest partially completed.
+export async function approveGroupRequest(
+  request: GroupJoinRequest,
+): Promise<void> {
+  await enrollMemberInGroup({
+    groupId: request.groupId,
+    userId: request.userId,
+    name: request.userName,
+    email: request.userEmail,
+  });
+  const batch = writeBatch(firestore);
+  batch.update(
+    doc(firestore, "groups", request.groupId, "requests", request.id),
+    { status: "approved" },
+  );
+  batch.set(
+    doc(
+      firestore,
+      "userRequests",
+      request.userId,
+      "pending",
+      request.id,
+    ),
+    { status: "approved" },
+    { merge: true },
+  );
+  await batch.commit();
+  await writeAudit({
+    action: "approve_join_request",
+    targetType: "group",
+    targetId: request.groupId,
+    test: false,
+    after: {
+      userId: request.userId,
+      userName: request.userName,
+      originatedBy: request.originatedBy,
+    },
+  });
+}
+
+/// Reject a user's join request (or cancel an admin invitation) on
+/// behalf of super-admin. Deletes both the group-side doc and the
+/// user-side mirror so the invitation disappears from the user's
+/// pending list too. `kind` labels the audit entry.
+export async function cancelGroupRequest(
+  request: GroupJoinRequest,
+): Promise<void> {
+  const batch = writeBatch(firestore);
+  batch.delete(
+    doc(firestore, "groups", request.groupId, "requests", request.id),
+  );
+  batch.delete(
+    doc(
+      firestore,
+      "userRequests",
+      request.userId,
+      "pending",
+      request.id,
+    ),
+  );
+  await batch.commit();
+  await writeAudit({
+    action:
+      request.originatedBy === "admin"
+        ? "cancel_group_invitation"
+        : "reject_join_request",
+    targetType: "group",
+    targetId: request.groupId,
+    test: false,
+    after: {
+      userId: request.userId,
+      userName: request.userName,
+      originatedBy: request.originatedBy,
+    },
+  });
+}
+
+/// Force-accept a pending admin invitation on the invitee's behalf.
+/// Same effect as the user tapping Accept in their pending list:
+/// enrolls the user, marks both mirrors approved. Only meaningful
+/// for `originatedBy: 'admin'` requests; rejects otherwise.
+export async function forceAcceptGroupInvitation(
+  request: GroupJoinRequest,
+): Promise<void> {
+  if (request.originatedBy !== "admin") {
+    throw new Error("Only admin invitations can be force-accepted.");
+  }
+  await enrollMemberInGroup({
+    groupId: request.groupId,
+    userId: request.userId,
+    name: request.userName,
+    email: request.userEmail,
+  });
+  const batch = writeBatch(firestore);
+  batch.update(
+    doc(firestore, "groups", request.groupId, "requests", request.id),
+    { status: "approved" },
+  );
+  batch.set(
+    doc(
+      firestore,
+      "userRequests",
+      request.userId,
+      "pending",
+      request.id,
+    ),
+    { status: "approved" },
+    { merge: true },
+  );
+  await batch.commit();
+  await writeAudit({
+    action: "force_accept_group_invitation",
+    targetType: "group",
+    targetId: request.groupId,
+    test: false,
+    after: {
+      userId: request.userId,
+      userName: request.userName,
+    },
+  });
+}
+
 /// Enroll a user into [groupId] on behalf of super-admin. Appends at
 /// the tail of the rotation, writes the member doc, bumps
 /// memberCount, and — for useSlots groups — adds a solo slot mirroring
