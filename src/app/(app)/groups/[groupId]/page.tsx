@@ -71,6 +71,7 @@ import {
   type SlotSummary,
   type GroupJoinRequest,
 } from "@/lib/groups";
+import { healGroup, type HealReport } from "@/lib/heal";
 import { Badge } from "@/components/ui/badge";
 import {
   groupPotId,
@@ -604,6 +605,7 @@ export default function GroupDetailPage() {
             groupName={group.name}
             disabled={busy !== null}
           />
+          <RunHealButton groupId={group.id} disabled={busy !== null} />
 
           {flag && (
             <Button
@@ -1525,6 +1527,39 @@ function ResetGroupButton({
         </div>
       )}
     </>
+  );
+}
+
+function RunHealButton({
+  groupId,
+  disabled,
+}: {
+  groupId: string;
+  disabled: boolean;
+}) {
+  const [running, setRunning] = useState(false);
+  async function run() {
+    setRunning(true);
+    try {
+      const r: HealReport = await healGroup(groupId);
+      const parts: string[] = [];
+      if (r.cycleFixed) parts.push("cycle fixed");
+      if (r.adminMemberCreated) parts.push("admin member restored");
+      if (r.slotsCreated > 0)
+        parts.push(`${r.slotsCreated} slot${r.slotsCreated === 1 ? "" : "s"} added`);
+      toast.success(
+        parts.length ? `Healed: ${parts.join(", ")}.` : "No drift found.",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Heal failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+  return (
+    <Button variant="outline" disabled={disabled || running} onClick={run}>
+      <RefreshCw /> {running ? "Healing…" : "Run heal now"}
+    </Button>
   );
 }
 

@@ -74,6 +74,8 @@ export type AuditAction =
   | "cancel_group_invitation"
   | "force_accept_group_invitation"
   | "reset_group"
+  | "heal_group"
+  | "heal_all_groups"
   | "flag_user_escalation"
   | "clear_user_escalation"
   | "update_admin_notes"

@@ -2,13 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Beaker, Flag, History, ShieldOff, Sparkles, Store, Users, UsersRound } from "lucide-react";
+import { AlertTriangle, Beaker, Flag, History, RefreshCw, ShieldOff, Sparkles, Store, Users, UsersRound } from "lucide-react";
+import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { subscribeGroups, type Group } from "@/lib/groups";
 import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { subscribeStores, type Store as StoreDoc } from "@/lib/stores";
 import { subscribeAuditLog, type AuditEntry } from "@/lib/audit";
+import { healAllGroups } from "@/lib/heal";
 
 export default function DashboardPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -68,11 +71,14 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Platform overview. Live totals from Firestore.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            Platform overview. Live totals from Firestore.
+          </p>
+        </div>
+        <HealAllButton />
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -304,4 +310,46 @@ function StatCard({
     </Card>
   );
   return href ? <Link href={href}>{inner}</Link> : inner;
+}
+
+function HealAllButton() {
+  const [running, setRunning] = useState(false);
+  async function run() {
+    if (
+      !window.confirm(
+        "Run heal on every group? Fixes stale cycle counters, missing admin member docs, and orphan members (adds a slot for anyone without one). Safe to re-run — no-ops when nothing is drifting.",
+      )
+    ) {
+      return;
+    }
+    setRunning(true);
+    try {
+      const r = await healAllGroups();
+      const details = [
+        `${r.processed} group${r.processed === 1 ? "" : "s"} scanned`,
+      ];
+      if (r.cycleFixed) details.push(`${r.cycleFixed} cycle fixes`);
+      if (r.adminMemberCreated)
+        details.push(`${r.adminMemberCreated} admin doc restores`);
+      if (r.slotsCreated) details.push(`${r.slotsCreated} slots added`);
+      if (r.failed) details.push(`${r.failed} failed`);
+      toast.success(details.join(" · "));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Heal-all failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={running}
+      onClick={run}
+      className="h-9"
+    >
+      <RefreshCw className="h-4 w-4" />
+      {running ? "Healing…" : "Heal all groups"}
+    </Button>
+  );
 }
