@@ -2293,13 +2293,27 @@ export async function resetGroup(groupId: string): Promise<{
     }),
   ]);
 
-  // 6. Group doc: rewind cycle state. Uses deleteField for optional
-  // fields that don't exist on non-secured groups.
+  // 6. Group doc: rewind cycle state. Also shift startDate forward
+  // so the time-based cycle counter resets — otherwise
+  // FirestoreService.currentCycleNumber returns max(stored, timeBased)
+  // and the stale past startDate keeps the group in a later cycle,
+  // which makes the overdue tab flag every wiped-out slot again.
   const groupData = groupSnap.data();
+  const frequency = String(groupData?.frequency ?? "monthly").toLowerCase();
+  const periodDays =
+    frequency === "weekly"
+      ? 7
+      : frequency === "biweekly"
+        ? 14
+        : 30;
+  const now = new Date();
+  const newStart = new Date(now);
+  newStart.setDate(newStart.getDate() + periodDays);
   const groupUpdate: Record<string, unknown> = {
     currentCycle: 1,
     positionsLocked: false,
     status: "active",
+    startDate: newStart,
   };
   if (groupData?.type === "secured") {
     groupUpdate.currentPhase = "notStarted";
