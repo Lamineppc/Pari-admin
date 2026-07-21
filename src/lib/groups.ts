@@ -2153,3 +2153,175 @@ export async function cancelAndRefundGroup(groupId: string): Promise<never> {
     "Cancel + refund needs PR 6a (ledger) and PR 6b–d (money layer). Coming soon.",
   );
 }
+
+/// Reset a group so it can restart from cycle 1 without deleting the
+/// roster. Wipes derived state (payments, ledger, position locks,
+/// pending requests) and rewinds every cycle field back to its
+/// "fresh group" default. Members and slots stay put — this is
+/// meant for admin-corrected restarts, not group deletion.
+///
+/// Preserves anything under `groups/{gid}/archives` (historical
+/// records that survive resets).
+///
+/// Destructive: the audit log records a count summary of what was
+/// wiped so operators can reconstruct scope after the fact.
+export async function resetGroup(groupId: string): Promise<{
+  paymentsDeleted: number;
+  ledgerDeleted: number;
+  requestsDeleted: number;
+  changeRequestsDeleted: number;
+  slotsReset: number;
+  membersReset: number;
+}> {
+  const groupRef = doc(firestore, "groups", groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) {
+    throw new Error("Group not found.");
+  }
+
+  const paymentsCol = collection(firestore, "groups", groupId, "payments");
+  const ledgerCol = collection(firestore, "groups", groupId, "ledger");
+  const requestsCol = collection(firestore, "groups", groupId, "requests");
+  const changeRequestsCol = collection(
+    firestore,
+    "groups",
+    groupId,
+    "payoutChangeRequests",
+  );
+  const slotsCol = collection(firestore, "groups", groupId, "slots");
+  const membersCol = collection(firestore, "groups", groupId, "members");
+
+  const [
+    paymentsSnap,
+    ledgerSnap,
+    requestsSnap,
+    changeRequestsSnap,
+    slotsSnap,
+    membersSnap,
+  ] = await Promise.all([
+    getDocs(paymentsCol),
+    getDocs(ledgerCol),
+    getDocs(requestsCol),
+    getDocs(changeRequestsCol),
+    getDocs(slotsCol),
+    getDocs(membersCol),
+  ]);
+
+  // Firestore batches cap at 500 writes; chunk to stay safe.
+  const CHUNK = 400;
+  const commit = async (
+    writes: ((batch: ReturnType<typeof writeBatch>) => void)[],
+  ) => {
+    for (let i = 0; i < writes.length; i += CHUNK) {
+      const b = writeBatch(firestore);
+      for (const w of writes.slice(i, i + CHUNK)) w(b);
+      await b.commit();
+    }
+  };
+
+  // 1. Delete all payments + ledger entries.
+  await commit([
+    ...paymentsSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) =>
+      b.delete(d.ref),
+    ),
+    ...ledgerSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) =>
+      b.delete(d.ref),
+    ),
+  ]);
+
+  // 2. Reset each slot: payoutCycle → null, clear pendingSecondary.
+  await commit(
+    slotsSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => {
+      b.update(d.ref, {
+        payoutCycle: null,
+        pendingSecondary: deleteField(),
+      });
+    }),
+  );
+
+  // 3. Reset each member's payoutCycle so legacy consumers agree.
+  await commit(
+    membersSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => {
+      b.update(d.ref, { payoutCycle: null });
+    }),
+  );
+
+  // 4. Clear pending join requests / invitations. Delete BOTH the
+  // group-side doc and the user-side mirror so the user's pending
+  // list clears too.
+  await commit([
+    ...requestsSnap.docs.flatMap((d) => {
+      const data = d.data();
+      const uid = String(data.userId ?? "");
+      const writes: ((b: ReturnType<typeof writeBatch>) => void)[] = [
+        (b) => b.delete(d.ref),
+      ];
+      if (uid) {
+        writes.push((b) =>
+          b.delete(
+            doc(firestore, "userRequests", uid, "pending", d.id),
+          ),
+        );
+      }
+      return writes;
+    }),
+  ]);
+
+  // 5. Clear pending payout-position change requests + their user
+  // mirrors under userPayoutRequests/{receiverId}/incoming.
+  await commit([
+    ...changeRequestsSnap.docs.flatMap((d) => {
+      const data = d.data();
+      const receiverId = String(data.receiverId ?? "");
+      const writes: ((b: ReturnType<typeof writeBatch>) => void)[] = [
+        (b) => b.delete(d.ref),
+      ];
+      if (receiverId) {
+        writes.push((b) =>
+          b.delete(
+            doc(
+              firestore,
+              "userPayoutRequests",
+              receiverId,
+              "incoming",
+              d.id,
+            ),
+          ),
+        );
+      }
+      return writes;
+    }),
+  ]);
+
+  // 6. Group doc: rewind cycle state. Uses deleteField for optional
+  // fields that don't exist on non-secured groups.
+  const groupData = groupSnap.data();
+  const groupUpdate: Record<string, unknown> = {
+    currentCycle: 1,
+    positionsLocked: false,
+    status: "active",
+  };
+  if (groupData?.type === "secured") {
+    groupUpdate.currentPhase = "notStarted";
+  }
+  await updateDoc(groupRef, groupUpdate);
+
+  const summary = {
+    paymentsDeleted: paymentsSnap.size,
+    ledgerDeleted: ledgerSnap.size,
+    requestsDeleted: requestsSnap.size,
+    changeRequestsDeleted: changeRequestsSnap.size,
+    slotsReset: slotsSnap.size,
+    membersReset: membersSnap.size,
+  };
+
+  await writeAudit({
+    action: "reset_group",
+    targetType: "group",
+    targetId: groupId,
+    test: false,
+    after: summary,
+  });
+
+  return summary;
+}

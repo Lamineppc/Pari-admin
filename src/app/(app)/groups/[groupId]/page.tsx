@@ -58,6 +58,7 @@ import {
   approveGroupRequest,
   cancelGroupRequest,
   forceAcceptGroupInvitation,
+  resetGroup,
   swapMemberPositions,
   takeOverAsCaretaker,
   transferOwnershipToManager,
@@ -598,6 +599,12 @@ export default function GroupDetailPage() {
               <Ban /> Cancel + refund all members
             </Button>
           )}
+          <ResetGroupButton
+            groupId={group.id}
+            groupName={group.name}
+            disabled={busy !== null}
+          />
+
           {flag && (
             <Button
               variant="outline"
@@ -1422,6 +1429,102 @@ function EnrollMemberDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Reset group (danger action) ────────────────────────────────────────────
+
+function ResetGroupButton({
+  groupId,
+  groupName,
+  disabled,
+}: {
+  groupId: string;
+  groupName: string;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [running, setRunning] = useState(false);
+
+  async function apply() {
+    setRunning(true);
+    try {
+      const summary = await resetGroup(groupId);
+      toast.success(
+        `Reset ${groupName}. Deleted ${summary.paymentsDeleted} payment${summary.paymentsDeleted === 1 ? "" : "s"}, ${summary.ledgerDeleted} ledger ${summary.ledgerDeleted === 1 ? "entry" : "entries"}, ${summary.requestsDeleted + summary.changeRequestsDeleted} pending. Rewound ${summary.slotsReset} slots + ${summary.membersReset} members to cycle 1.`,
+      );
+      setOpen(false);
+      setConfirmText("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reset failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const armed = confirmText.trim() === groupName;
+
+  return (
+    <>
+      <Button
+        variant="outline"
+        disabled={disabled}
+        className="border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+        onClick={() => setOpen(true)}
+      >
+        <RefreshCw /> Reset group (start over)
+      </Button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+            <div className="mb-2 text-sm font-semibold text-red-700 dark:text-red-300">
+              Reset “{groupName}”?
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              This wipes every contribution + payout doc, every ledger
+              entry, all pending join / invite / position-change
+              requests, and every pending split invitation. Slots and
+              members stay, but their payout state and the group&apos;s
+              cycle counters rewind to cycle 1. Anything under
+              <span className="mx-1 font-mono">archives</span> is left
+              alone. Cannot be undone.
+            </div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Type the group name to confirm:
+            </label>
+            <input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={groupName}
+              autoFocus
+              className="mb-4 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={running}
+                onClick={() => {
+                  setOpen(false);
+                  setConfirmText("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!armed || running}
+                onClick={apply}
+              >
+                {running ? "Resetting…" : "Reset group"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

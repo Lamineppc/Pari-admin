@@ -73,6 +73,7 @@ export type AuditAction =
   | "reject_join_request"
   | "cancel_group_invitation"
   | "force_accept_group_invitation"
+  | "reset_group"
   | "flag_user_escalation"
   | "clear_user_escalation"
   | "update_admin_notes"
