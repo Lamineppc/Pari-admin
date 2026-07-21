@@ -2172,6 +2172,8 @@ export async function resetGroup(groupId: string): Promise<{
   changeRequestsDeleted: number;
   slotsReset: number;
   membersReset: number;
+  slotsVoided: number;
+  membersKicked: number;
 }> {
   const groupRef = doc(firestore, "groups", groupId);
   const groupSnap = await getDoc(groupRef);
@@ -2229,20 +2231,76 @@ export async function resetGroup(groupId: string): Promise<{
     ),
   ]);
 
-  // 2. Reset each slot: payoutCycle → null, clear pendingSecondary.
+  // 2. Enforce 1 slot = 1 member. Void every split slot and every slot
+  // owned by a member who holds more than one — soft-kick their owners
+  // so the admin re-enrolls them cleanly. Surviving slots (solo, sole
+  // slot for their owner) get payoutCycle/pendingSecondary cleared and
+  // are renumbered contiguously.
+  const ownerSlotCount = new Map<string, number>();
+  for (const d of slotsSnap.docs) {
+    const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+    for (const o of owners) {
+      const uid = String(o?.userId ?? "");
+      if (!uid) continue;
+      ownerSlotCount.set(uid, (ownerSlotCount.get(uid) ?? 0) + 1);
+    }
+  }
+
+  const kickedUids = new Set<string>();
+  const voidSlotDocs: typeof slotsSnap.docs = [];
+  const surviveSlotDocs: typeof slotsSnap.docs = [];
+  for (const d of slotsSnap.docs) {
+    const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+    const isSplit = owners.length >= 2;
+    const solo = owners.length === 1 ? String(owners[0]?.userId ?? "") : "";
+    const soloMultiSlot = solo !== "" && (ownerSlotCount.get(solo) ?? 0) > 1;
+    if (isSplit || soloMultiSlot) {
+      voidSlotDocs.push(d);
+      for (const o of owners) {
+        const uid = String(o?.userId ?? "");
+        if (uid) kickedUids.add(uid);
+      }
+    } else {
+      surviveSlotDocs.push(d);
+    }
+  }
+
+  // Delete voided slot docs.
   await commit(
-    slotsSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => {
-      b.update(d.ref, {
-        payoutCycle: null,
-        pendingSecondary: deleteField(),
-      });
+    voidSlotDocs.map((d) => (b: ReturnType<typeof writeBatch>) => {
+      b.delete(d.ref);
     }),
   );
 
+  // Renumber survivors 1..N by their existing position order.
+  const orderedSurvivors = [...surviveSlotDocs].sort((a, b) => {
+    const pa = Number(a.data().position ?? 0);
+    const pb = Number(b.data().position ?? 0);
+    return pa - pb;
+  });
+  await commit(
+    orderedSurvivors.map(
+      (d, i) => (b: ReturnType<typeof writeBatch>) => {
+        b.update(d.ref, {
+          position: i + 1,
+          payoutCycle: null,
+          pendingSecondary: deleteField(),
+        });
+      },
+    ),
+  );
+
   // 3. Reset each member's payoutCycle so legacy consumers agree.
+  // Owners of voided slots are soft-kicked in the same pass — admin
+  // can re-enroll them fresh after the reset.
   await commit(
     membersSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => {
-      b.update(d.ref, { payoutCycle: null });
+      const update: Record<string, unknown> = { payoutCycle: null };
+      if (kickedUids.has(d.id)) {
+        update.kicked = true;
+        update.kickedAt = serverTimestamp();
+      }
+      b.update(d.ref, update);
     }),
   );
 
@@ -2325,8 +2383,10 @@ export async function resetGroup(groupId: string): Promise<{
     ledgerDeleted: ledgerSnap.size,
     requestsDeleted: requestsSnap.size,
     changeRequestsDeleted: changeRequestsSnap.size,
-    slotsReset: slotsSnap.size,
+    slotsReset: orderedSurvivors.length,
     membersReset: membersSnap.size,
+    slotsVoided: voidSlotDocs.length,
+    membersKicked: kickedUids.size,
   };
 
   await writeAudit({

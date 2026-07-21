@@ -1453,8 +1453,12 @@ function ResetGroupButton({
     setRunning(true);
     try {
       const summary = await resetGroup(groupId);
+      const voidTail =
+        summary.slotsVoided > 0
+          ? ` Voided ${summary.slotsVoided} slot${summary.slotsVoided === 1 ? "" : "s"} + kicked ${summary.membersKicked} member${summary.membersKicked === 1 ? "" : "s"} (extras/splits).`
+          : "";
       toast.success(
-        `Reset ${groupName}. Deleted ${summary.paymentsDeleted} payment${summary.paymentsDeleted === 1 ? "" : "s"}, ${summary.ledgerDeleted} ledger ${summary.ledgerDeleted === 1 ? "entry" : "entries"}, ${summary.requestsDeleted + summary.changeRequestsDeleted} pending. Rewound ${summary.slotsReset} slots + ${summary.membersReset} members to cycle 1.`,
+        `Reset ${groupName}. Deleted ${summary.paymentsDeleted} payment${summary.paymentsDeleted === 1 ? "" : "s"}, ${summary.ledgerDeleted} ledger ${summary.ledgerDeleted === 1 ? "entry" : "entries"}, ${summary.requestsDeleted + summary.changeRequestsDeleted} pending. Rewound ${summary.slotsReset} slots + ${summary.membersReset} members to cycle 1.${voidTail}`,
       );
       setOpen(false);
       setConfirmText("");
