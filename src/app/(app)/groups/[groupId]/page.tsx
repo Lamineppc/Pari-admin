@@ -2275,6 +2275,12 @@ function SlotList({
           s.owners.length === 1 && Math.abs(s.owners[0]!.share - 1.0) < 1e-6;
         const paid = s.payoutCycle !== null;
         const hasPending = !!s.pendingSecondaryUserId;
+        const pendingMember = hasPending
+          ? members?.find((m) => m.userId === s.pendingSecondaryUserId)
+          : undefined;
+        const pendingLabel = hasPending
+          ? `${pendingMember?.name || s.pendingSecondaryUserId!.slice(0, 6)}${s.pendingSecondaryUserId === adminUid ? " (admin)" : ""}`
+          : null;
         return (
           <div
             key={s.id}
@@ -2302,7 +2308,15 @@ function SlotList({
                     .join(" + ")
                 )}
                 {hasPending && (
-                  <span className="ml-2 text-amber-600">→ pending secondary</span>
+                  <span className="ml-2 text-amber-600">
+                    → pending secondary: {pendingLabel}
+                    <span
+                      className="ml-1 font-mono text-[10px] text-amber-600/70"
+                      title={s.pendingSecondaryUserId ?? undefined}
+                    >
+                      {s.pendingSecondaryUserId!.slice(0, 6)}
+                    </span>
+                  </span>
                 )}
               </div>
               {paid && (
