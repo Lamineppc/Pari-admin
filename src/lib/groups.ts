@@ -2231,37 +2231,51 @@ export async function resetGroup(groupId: string): Promise<{
     ),
   ]);
 
-  // 2. Enforce 1 slot = 1 member. Void every split slot and every slot
-  // owned by a member who holds more than one — soft-kick their owners
-  // so the admin re-enrolls them cleanly. Surviving slots (solo, sole
-  // slot for their owner) get payoutCycle/pendingSecondary cleared and
-  // are renumbered contiguously.
-  const ownerSlotCount = new Map<string, number>();
-  for (const d of slotsSnap.docs) {
-    const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
-    for (const o of owners) {
-      const uid = String(o?.userId ?? "");
-      if (!uid) continue;
-      ownerSlotCount.set(uid, (ownerSlotCount.get(uid) ?? 0) + 1);
-    }
-  }
-
+  // 2. Enforce 1 slot = 1 member.
+  //   - Split slots (>=2 owners): void the slot and kick every co-owner.
+  //   - Solo slots where the owner holds more than one: keep the
+  //     lowest-position slot for that owner; void the extras. Owner is
+  //     NOT kicked — they still hold one slot after the reset.
+  //   - Anyone kicked via a split also loses any other slots they own
+  //     (their kept-lowest survivor is voided too, since they're gone).
+  // Surviving slots get payoutCycle/pendingSecondary cleared and are
+  // renumbered contiguously.
   const kickedUids = new Set<string>();
-  const voidSlotDocs: typeof slotsSnap.docs = [];
-  const surviveSlotDocs: typeof slotsSnap.docs = [];
   for (const d of slotsSnap.docs) {
     const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
-    const isSplit = owners.length >= 2;
-    const solo = owners.length === 1 ? String(owners[0]?.userId ?? "") : "";
-    const soloMultiSlot = solo !== "" && (ownerSlotCount.get(solo) ?? 0) > 1;
-    if (isSplit || soloMultiSlot) {
-      voidSlotDocs.push(d);
+    if (owners.length >= 2) {
       for (const o of owners) {
         const uid = String(o?.userId ?? "");
         if (uid) kickedUids.add(uid);
       }
-    } else {
+    }
+  }
+
+  // For each surviving (non-kicked) uid, pick the lowest-position solo
+  // slot as the keeper; every other slot they own is voided.
+  const soloByOwner = new Map<string, typeof slotsSnap.docs>();
+  for (const d of slotsSnap.docs) {
+    const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+    if (owners.length !== 1) continue;
+    const uid = String(owners[0]?.userId ?? "");
+    if (!uid || kickedUids.has(uid)) continue;
+    const list = soloByOwner.get(uid) ?? [];
+    list.push(d);
+    soloByOwner.set(uid, list);
+  }
+  const keeperDocIds = new Set<string>();
+  for (const [, list] of soloByOwner) {
+    list.sort((a, b) => Number(a.data().position ?? 0) - Number(b.data().position ?? 0));
+    keeperDocIds.add(list[0].id);
+  }
+
+  const voidSlotDocs: typeof slotsSnap.docs = [];
+  const surviveSlotDocs: typeof slotsSnap.docs = [];
+  for (const d of slotsSnap.docs) {
+    if (keeperDocIds.has(d.id)) {
       surviveSlotDocs.push(d);
+    } else {
+      voidSlotDocs.push(d);
     }
   }
 

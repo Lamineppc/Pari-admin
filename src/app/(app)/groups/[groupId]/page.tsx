@@ -1490,9 +1490,13 @@ function ResetGroupButton({
             <div className="mb-3 text-xs text-muted-foreground">
               This wipes every contribution + payout doc, every ledger
               entry, all pending join / invite / position-change
-              requests, and every pending split invitation. Slots and
-              members stay, but their payout state and the group&apos;s
-              cycle counters rewind to cycle 1. Anything under
+              requests, and every pending split invitation. Enforces
+              1 slot = 1 member: split slots are voided and both
+              co-owners are kicked; members holding multiple slots
+              keep their lowest-position slot and lose the extras
+              (not kicked). Surviving members and slots stay; payout
+              state and the group&apos;s cycle counters rewind to cycle
+              1. Anything under
               <span className="mx-1 font-mono">archives</span> is left
               alone. Cannot be undone.
             </div>
