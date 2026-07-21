@@ -2292,6 +2292,9 @@ export async function resetGroup(groupId: string): Promise<{
     const pb = Number(b.data().position ?? 0);
     return pa - pb;
   });
+  // Map surviving-slot owner uid -> new 1..N position, so we can sync
+  // member.position below (fresh-rotation feel: no stale positions).
+  const uidToNewPosition = new Map<string, number>();
   await commit(
     orderedSurvivors.map(
       (d, i) => (b: ReturnType<typeof writeBatch>) => {
@@ -2300,19 +2303,41 @@ export async function resetGroup(groupId: string): Promise<{
           payoutCycle: null,
           pendingSecondary: deleteField(),
         });
+        const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+        const uid = String(owners[0]?.userId ?? "");
+        if (uid) uidToNewPosition.set(uid, i + 1);
       },
     ),
   );
 
   // 3. Reset each member's payoutCycle so legacy consumers agree.
   // Owners of voided slots are soft-kicked in the same pass — admin
-  // can re-enroll them fresh after the reset.
+  // can re-enroll them fresh after the reset. For surviving members we
+  // also rewrite member.position to match their new slot position so
+  // the mobile UI's fallback-to-member.position paths render a clean
+  // 1..N with no gaps (mirrors initial-rotation state — admin can then
+  // reorder freely while positionsLocked is false). Non-useSlots
+  // groups: renumber survivors in their existing position order.
+  const isUseSlots = groupSnap.data()?.useSlots === true;
+  const nonSlotSurvivors = isUseSlots
+    ? []
+    : membersSnap.docs
+        .filter((m) => !kickedUids.has(m.id))
+        .sort(
+          (a, b) => Number(a.data().position ?? 0) - Number(b.data().position ?? 0),
+        );
   await commit(
     membersSnap.docs.map((d) => (b: ReturnType<typeof writeBatch>) => {
       const update: Record<string, unknown> = { payoutCycle: null };
       if (kickedUids.has(d.id)) {
         update.kicked = true;
         update.kickedAt = serverTimestamp();
+      } else if (isUseSlots) {
+        const p = uidToNewPosition.get(d.id);
+        if (p != null) update.position = p;
+      } else {
+        const idx = nonSlotSurvivors.findIndex((m) => m.id === d.id);
+        if (idx >= 0) update.position = idx + 1;
       }
       b.update(d.ref, update);
     }),
