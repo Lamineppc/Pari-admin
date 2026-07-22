@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Pause, Play, ShieldOff, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, Pause, Play, ShieldOff, XCircle } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -23,9 +23,11 @@ import {
   reinstateStore,
   rejectStore,
   revokeStore,
+  setStoreEscalation,
   subscribeStoreListings,
   suspendStore,
   type Store,
+  type StoreEscalationFlag,
   type StoreListing,
 } from "@/lib/stores";
 
@@ -226,6 +228,10 @@ export function StoreDetailSheet({
 
           <Separator />
 
+          <StoreEscalationPanel store={store} />
+
+          <Separator />
+
           <div className="flex flex-col gap-2">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Decision
@@ -343,6 +349,121 @@ export function StoreDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function StoreEscalationPanel({ store }: { store: Store }) {
+  const [flag, setFlag] = useState<StoreEscalationFlag | "">(
+    store.escalationFlag ?? "",
+  );
+  const [reason, setReason] = useState(store.escalationReason ?? "");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setFlag(store.escalationFlag ?? "");
+    setReason(store.escalationReason ?? "");
+  }, [store.escalationFlag, store.escalationReason]);
+
+  async function apply() {
+    setBusy(true);
+    try {
+      await setStoreEscalation(
+        store,
+        flag === "" ? null : (flag as StoreEscalationFlag),
+        reason,
+      );
+      toast.success(
+        flag === "" ? "Escalation cleared." : "Escalation flag applied.",
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearFlag() {
+    setBusy(true);
+    try {
+      await setStoreEscalation(store, null);
+      setFlag("");
+      setReason("");
+      toast.success("Escalation cleared.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Clear failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Escalation
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Raise a flag when this store needs attention (spam listings, fraud
+        suspected, complaint received). Does not restrict access — pair with
+        suspend or revoke as needed.
+      </p>
+      {store.escalationFlaggedAt && (
+        <p className="text-[11px] text-amber-700">
+          Flagged {store.escalationFlaggedAt.toLocaleString()}
+        </p>
+      )}
+      <div className="flex max-w-md flex-col gap-2 text-sm">
+        <div className="flex items-center gap-2">
+          <label className="w-20 text-xs text-muted-foreground">Kind</label>
+          <select
+            value={flag}
+            onChange={(e) =>
+              setFlag(e.target.value as StoreEscalationFlag | "")
+            }
+            className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+          >
+            <option value="">— none —</option>
+            <option value="spam_reports">spam_reports</option>
+            <option value="fraud_suspected">fraud_suspected</option>
+            <option value="complaint">complaint</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div className="flex items-start gap-2">
+          <label className="w-20 pt-1 text-xs text-muted-foreground">
+            Reason
+          </label>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            placeholder="Context — where this came from, what to check."
+            className="flex-1 text-sm"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            className="w-fit"
+            disabled={busy || flag === ""}
+            onClick={apply}
+          >
+            {busy ? "Saving…" : store.escalationFlag ? "Update flag" : "Raise flag"}{" "}
+            <ChevronRight />
+          </Button>
+          {store.escalationFlag && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-fit"
+              disabled={busy}
+              onClick={clearFlag}
+            >
+              Clear flag <ChevronRight />
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

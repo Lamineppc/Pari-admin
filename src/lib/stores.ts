@@ -3,6 +3,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -26,6 +27,12 @@ export type StoreStatus =
   | "rejected"
   | "revoked";
 
+export type StoreEscalationFlag =
+  | "spam_reports"
+  | "fraud_suspected"
+  | "complaint"
+  | "other";
+
 export type Store = {
   id: string;
   storeName: string;
@@ -37,6 +44,9 @@ export type Store = {
   rejectionReason: string | null;
   createdAt: Date | null;
   approvedAt: Date | null;
+  escalationFlag: StoreEscalationFlag | null;
+  escalationReason: string | null;
+  escalationFlaggedAt: Date | null;
 };
 
 export type StoreListing = {
@@ -71,6 +81,11 @@ function toStore(snap: QueryDocumentSnapshot): Store {
     rejectionReason: (d.rejectionReason as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
     approvedAt: (d.approvedAt as Timestamp | undefined)?.toDate() ?? null,
+    escalationFlag:
+      (d.escalationFlag as StoreEscalationFlag | undefined) ?? null,
+    escalationReason: (d.escalationReason as string | undefined) ?? null,
+    escalationFlaggedAt:
+      (d.escalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
 
@@ -242,6 +257,44 @@ export async function rejectStore(
     test: store.ownerId.startsWith("sim_"),
     after: { status: "rejected", rejectionReason: reason || null },
     reason: reason || null,
+    metadata: { ownerId: store.ownerId, storeName: store.storeName },
+  });
+}
+
+/// Raise an escalation flag on [storeId]. Categorized (spam / fraud /
+/// complaint / other) plus a free-form reason for context. Doesn't
+/// change store status or restrict listings — pair with suspend/revoke
+/// as needed. Passing flag=null clears the escalation.
+export async function setStoreEscalation(
+  store: Pick<Store, "id" | "ownerId" | "storeName">,
+  flag: StoreEscalationFlag | null,
+  reason: string = "",
+): Promise<void> {
+  const ref = doc(firestore, "stores", store.id);
+  const before = await getDoc(ref);
+  const beforeFlag =
+    (before.data()?.escalationFlag as StoreEscalationFlag | undefined) ?? null;
+  if (flag === null) {
+    await updateDoc(ref, {
+      escalationFlag: deleteField(),
+      escalationReason: deleteField(),
+      escalationFlaggedAt: deleteField(),
+    });
+  } else {
+    await updateDoc(ref, {
+      escalationFlag: flag,
+      escalationReason: reason || null,
+      escalationFlaggedAt: serverTimestamp(),
+    });
+  }
+  await writeAudit({
+    action: flag === null ? "clear_store_escalation" : "flag_store_escalation",
+    targetType: "store",
+    targetId: store.id,
+    test: store.ownerId.startsWith("sim_"),
+    reason: reason || undefined,
+    before: { escalationFlag: beforeFlag },
+    after: { escalationFlag: flag },
     metadata: { ownerId: store.ownerId, storeName: store.storeName },
   });
 }
