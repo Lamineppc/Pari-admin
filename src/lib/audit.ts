@@ -78,6 +78,8 @@ export type AuditAction =
   | "heal_all_groups"
   | "flag_user_escalation"
   | "clear_user_escalation"
+  | "flag_store_escalation"
+  | "clear_store_escalation"
   | "update_admin_notes"
   | "set_member_role"
   | "swap_member_positions"
