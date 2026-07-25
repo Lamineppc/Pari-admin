@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Package, Percent, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -21,13 +21,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  isPayoutReady,
   itemsSubtotal,
   subscribeOrders,
   type MarketplaceOrder,
   type OrderStatus,
 } from "@/lib/orders";
 
-type Filter = "all" | "awaiting_quote" | "quoted" | "paid" | "in_transit" | "delivered" | "paid_out" | "cancelled" | "refunded";
+type Filter =
+  | "all"
+  | "payout_due"
+  | "awaiting_quote"
+  | "quoted"
+  | "paid"
+  | "in_transit"
+  | "delivered"
+  | "paid_out"
+  | "cancelled"
+  | "refunded";
 
 function statusLabel(s: OrderStatus): string {
   switch (s) {
@@ -87,6 +98,25 @@ export default function OrdersPage() {
 
   useEffect(() => subscribeMarketplaceConfig((cfg) => setFeePct(cfg.feePercent)), []);
 
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const f = searchParams.get("filter");
+    if (!f) return;
+    const known: Filter[] = [
+      "all",
+      "payout_due",
+      "awaiting_quote",
+      "quoted",
+      "paid",
+      "in_transit",
+      "delivered",
+      "paid_out",
+      "cancelled",
+      "refunded",
+    ];
+    if (known.includes(f as Filter)) setFilter(f as Filter);
+  }, [searchParams]);
+
   useEffect(() => {
     const unsub = subscribeOrders(setOrders, (e) => {
       toast.error(e.message);
@@ -97,7 +127,14 @@ export default function OrdersPage() {
 
   const filtered = useMemo(() => {
     if (!orders) return null;
-    const byStatus = filter === "all" ? orders : orders.filter((o) => o.status === filter);
+    let byStatus: MarketplaceOrder[];
+    if (filter === "all") {
+      byStatus = orders;
+    } else if (filter === "payout_due") {
+      byStatus = orders.filter(isPayoutReady);
+    } else {
+      byStatus = orders.filter((o) => o.status === filter);
+    }
     const needle = q.trim().toLowerCase();
     if (!needle) return byStatus;
     return byStatus.filter(
@@ -113,11 +150,13 @@ export default function OrdersPage() {
     if (!orders) return {} as Record<Filter, number>;
     const out: Record<string, number> = { all: orders.length };
     for (const o of orders) out[o.status] = (out[o.status] ?? 0) + 1;
+    out.payout_due = orders.filter(isPayoutReady).length;
     return out as Record<Filter, number>;
   }, [orders]);
 
   const chips: Filter[] = [
     "all",
+    "payout_due",
     "awaiting_quote",
     "quoted",
     "paid",
@@ -127,6 +166,12 @@ export default function OrdersPage() {
     "cancelled",
     "refunded",
   ];
+
+  function chipLabel(c: Filter): string {
+    if (c === "all") return "All";
+    if (c === "payout_due") return "Payout due";
+    return statusLabel(c as OrderStatus);
+  }
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -176,7 +221,7 @@ export default function OrdersPage() {
                   : "hover:bg-muted")
               }
             >
-              {c === "all" ? "All" : statusLabel(c as OrderStatus)}
+              {chipLabel(c)}
               <span className="ml-1 text-[10px] opacity-70">
                 {counts[c] ?? 0}
               </span>

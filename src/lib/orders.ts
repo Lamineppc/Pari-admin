@@ -251,6 +251,124 @@ export async function cancelOrder(orderId: string, reason?: string): Promise<voi
   });
 }
 
+/// Manual T+3d payout. Admin fires this once the 3-day hold has
+/// elapsed after delivery. Moves (itemsSubtotal - platformFee) from
+/// the marketplace escrow wallet to the seller's mock wallet. The
+/// platform fee + delivery fee stay in escrow as Pari revenue and
+/// can be swept out later by a super admin action.
+///
+/// Guardrail: refuses to run before deliveredAt + 3 days. Admin can
+/// override via `force: true` (audit-logged as such).
+export type PayoutResult = {
+  paidToSeller: number;
+  platformFeeCollected: number;
+  deliveryFeeCollected: number;
+  currency: string;
+};
+
+export async function payOutOrderToSeller(
+  orderId: string,
+  options: { force?: boolean } = {},
+): Promise<PayoutResult> {
+  const orderRef = doc(firestore, "orders", orderId);
+  const orderSnap = await getDoc(orderRef);
+  if (!orderSnap.exists()) throw new Error("Order not found.");
+  const d = orderSnap.data();
+  const status = d.status as OrderStatus | undefined;
+  if (status !== "delivered") {
+    throw new Error("Payout only applies to delivered orders.");
+  }
+  const deliveredAtTs = d.deliveredAt as Timestamp | undefined;
+  const deliveredAt = deliveredAtTs?.toDate();
+  if (!deliveredAt) throw new Error("Delivered timestamp missing.");
+  const holdMs = 3 * 24 * 60 * 60 * 1000;
+  const readyAt = deliveredAt.getTime() + holdMs;
+  if (!options.force && Date.now() < readyAt) {
+    const days = Math.ceil((readyAt - Date.now()) / (24 * 60 * 60 * 1000));
+    throw new Error(
+      `3-day hold not up yet — ${days} day(s) remaining. Use force to override.`,
+    );
+  }
+
+  const currency = String(d.currency ?? "CFA").toLowerCase();
+  const sellerId = String(d.sellerId ?? "");
+  const items = ((d.lines as Array<Record<string, unknown>>) ?? []).reduce(
+    (t, l) => t + Number(l.price ?? 0) * Number(l.quantity ?? 1),
+    0,
+  );
+  const deliveryFee = Number(d.deliveryFee ?? 0);
+  const feePct = Number(d.platformFeePercent ?? 0);
+  const platformFee = Math.round((items * feePct) / 100);
+  const sellerAmount = items - platformFee;
+  if (sellerAmount <= 0) {
+    throw new Error("Seller amount computes to zero or negative — refusing.");
+  }
+
+  const escrowRef = doc(firestore, "mockWallets", `mkt_escrow_${currency}`);
+  const sellerWalletRef = doc(firestore, "mockWallets", `user_${sellerId}`);
+  await runTransaction(firestore, async (tx) => {
+    const eSnap = await tx.get(escrowRef);
+    const sSnap = await tx.get(sellerWalletRef);
+    const eBal = Number(eSnap.data()?.balance ?? 0);
+    const sBal = Number(sSnap.data()?.balance ?? 0);
+    if (eBal < sellerAmount) {
+      throw new Error(
+        `Escrow balance too low for payout (has ${eBal}, needs ${sellerAmount}).`,
+      );
+    }
+    tx.set(escrowRef, {
+      balance: eBal - sellerAmount,
+      currency: currency.toUpperCase(),
+      updatedAt: serverTimestamp(),
+    });
+    tx.set(sellerWalletRef, {
+      balance: sBal + sellerAmount,
+      currency: currency.toUpperCase(),
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(orderRef, {
+      status: "paid_out",
+      paidOutAt: serverTimestamp(),
+      sellerPayoutAmount: sellerAmount,
+      platformFeeCollected: platformFee,
+      deliveryFeeCollected: deliveryFee,
+    });
+  });
+
+  await writeAudit({
+    action: "pay_out_order",
+    targetType: "order",
+    targetId: orderId,
+    test: false,
+    reason: options.force ? "forced_before_3d_hold" : null,
+    after: { sellerAmount, platformFee, deliveryFee, forced: !!options.force },
+  });
+  if (sellerId) {
+    await addDoc(collection(firestore, "users", sellerId, "notifications"), {
+      type: "order_paid_out",
+      title: "You've been paid",
+      body: `Pari released ${currency.toUpperCase()} ${sellerAmount.toLocaleString()} to your wallet for a completed marketplace order.`,
+      isRead: false,
+      createdAt: serverTimestamp(),
+      metadata: { orderId, amount: sellerAmount },
+    });
+  }
+  return {
+    paidToSeller: sellerAmount,
+    platformFeeCollected: platformFee,
+    deliveryFeeCollected: deliveryFee,
+    currency: currency.toUpperCase(),
+  };
+}
+
+/// Utility: is [order] ready for payout right now? Used by the
+/// dashboard/filter to surface "payout due" without a scheduler.
+export function isPayoutReady(o: MarketplaceOrder): boolean {
+  if (o.status !== "delivered") return false;
+  if (!o.deliveredAt) return false;
+  return Date.now() >= o.deliveredAt.getTime() + 3 * 24 * 60 * 60 * 1000;
+}
+
 /// Refund a paid order — moves the full grand-total back from the
 /// marketplace escrow wallet to the buyer's wallet and marks the
 /// order refunded. Uses the same mock-money layer as checkout while

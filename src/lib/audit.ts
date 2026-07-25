@@ -105,7 +105,8 @@ export type AuditAction =
   | "refund_order"
   | "grant_courier_role"
   | "revoke_courier_role"
-  | "set_platform_config";
+  | "set_platform_config"
+  | "pay_out_order";
 
 export type AuditTargetType =
   | "group"

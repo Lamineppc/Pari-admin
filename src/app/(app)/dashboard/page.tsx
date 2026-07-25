@@ -13,13 +13,19 @@ import { subscribeStores, type Store as StoreDoc } from "@/lib/stores";
 import { subscribeAuditLog, type AuditEntry } from "@/lib/audit";
 import { healAllGroups } from "@/lib/heal";
 import { purgeOrphanSimUsers } from "@/lib/mock-groups";
-import { Trash2 } from "lucide-react";
+import { Trash2, Package } from "lucide-react";
+import {
+  isPayoutReady,
+  subscribeOrders,
+  type MarketplaceOrder,
+} from "@/lib/orders";
 
 export default function DashboardPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [stores, setStores] = useState<StoreDoc[] | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [orders, setOrders] = useState<MarketplaceOrder[] | null>(null);
 
   useEffect(() => {
     const unsubG = subscribeGroups(setGroups, () => setGroups([]));
@@ -30,13 +36,20 @@ export default function DashboardPage() {
       { max: 15 },
       () => setAudit([]),
     );
+    const unsubO = subscribeOrders(setOrders, () => setOrders([]));
     return () => {
       unsubG();
       unsubU();
       unsubS();
       unsubA();
+      unsubO();
     };
   }, []);
+
+  const payoutDueCount = useMemo(
+    () => (orders ? orders.filter(isPayoutReady).length : null),
+    [orders],
+  );
 
   const groupStats = useMemo(() => {
     if (!groups) return null;
@@ -115,6 +128,15 @@ export default function DashboardPage() {
           tone="text-amber-600"
           description="Marketplace vendors awaiting review."
           highlight={(pendingStores ?? 0) > 0}
+        />
+        <StatCard
+          title="Payouts due"
+          value={payoutDueCount}
+          icon={Package}
+          tone="text-primary"
+          description="Delivered orders past the 3-day hold — click to release seller funds."
+          highlight={(payoutDueCount ?? 0) > 0}
+          href="/orders?filter=payout_due"
         />
       </div>
 

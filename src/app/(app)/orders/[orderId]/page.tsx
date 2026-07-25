@@ -13,8 +13,10 @@ import { Badge } from "@/components/ui/badge";
 import {
   assignCourierAndIssuePin,
   cancelOrder,
+  isPayoutReady,
   itemsSubtotal,
   listCouriers,
+  payOutOrderToSeller,
   quoteOrder,
   refundOrder,
   subscribeOrder,
@@ -423,14 +425,107 @@ function InTransitPanel({ order }: { order: MarketplaceOrder }) {
 }
 
 function DeliveredPanel({ order }: { order: MarketplaceOrder }) {
+  const [busy, setBusy] = useState(false);
+  const ready = isPayoutReady(order);
+  const items = itemsSubtotal(order);
+  const feePct = order.platformFeePercent ?? 0;
+  const platformFee = Math.round((items * feePct) / 100);
+  const sellerAmount = items - platformFee;
+  const deliveryFee = order.deliveryFee ?? 0;
+  const readyAt = order.deliveredAt
+    ? new Date(order.deliveredAt.getTime() + 3 * 24 * 60 * 60 * 1000)
+    : null;
+
+  async function run(force = false) {
+    if (!force) {
+      if (
+        !window.confirm(
+          `Pay ${order.currency} ${sellerAmount.toLocaleString()} to the seller now?`,
+        )
+      ) {
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      const r = await payOutOrderToSeller(order.id, { force });
+      toast.success(
+        `Paid ${r.currency} ${r.paidToSeller.toLocaleString()} to seller.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Payout failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section className="rounded-md border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950/40">
-      <div className="text-sm font-medium text-green-800 dark:text-green-200">
-        Delivered
+    <section className="rounded-md border p-4">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Payout
       </div>
-      <div className="mt-1 text-xs text-green-700 dark:text-green-300">
-        Delivered on {fmtDate(order.deliveredAt)}. Seller will be paid
-        automatically 3 days after this timestamp (scheduled Cloud Function).
+      <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm dark:border-green-900 dark:bg-green-950/40">
+        <div className="font-medium text-green-800 dark:text-green-200">
+          Delivered {fmtDate(order.deliveredAt)}
+        </div>
+        <div className="mt-1 text-xs text-green-700 dark:text-green-300">
+          {ready
+            ? "3-day hold complete — you can release the seller's payout now."
+            : `3-day hold ends ${readyAt?.toLocaleString() ?? "—"}.`}
+        </div>
+      </div>
+      <div className="mt-3 rounded-md border p-3 text-sm">
+        <div className="flex justify-between text-muted-foreground">
+          <span>Items subtotal</span>
+          <span className="tabular-nums">
+            {order.currency} {items.toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-1 flex justify-between text-muted-foreground">
+          <span>Platform fee ({feePct}%)</span>
+          <span className="tabular-nums">
+            − {order.currency} {platformFee.toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-2 flex justify-between font-semibold">
+          <span>Seller receives</span>
+          <span className="tabular-nums text-primary">
+            {order.currency} {sellerAmount.toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-2 border-t pt-2 text-xs text-muted-foreground">
+          Pari keeps {order.currency}{" "}
+          {(platformFee + deliveryFee).toLocaleString()} (fee + delivery). No
+          scheduler — click below to release.
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          onClick={() => run(false)}
+          disabled={busy || !ready}
+          size="sm"
+        >
+          <Undo2 className="mr-1 h-4 w-4 rotate-180" />
+          {busy ? "Paying…" : "Pay seller now"}
+        </Button>
+        {!ready && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Force early payout before the 3-day hold? Audit-logged as forced.",
+                )
+              ) {
+                run(true);
+              }
+            }}
+          >
+            Force early payout
+          </Button>
+        )}
       </div>
     </section>
   );
