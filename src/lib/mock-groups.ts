@@ -250,9 +250,18 @@ export async function purgeOrphanSimUsers(): Promise<number> {
     const ids = (g.data().memberIds as string[] | undefined) ?? [];
     for (const id of ids) stillReferenced.add(id);
   }
-  const orphans = usersSnap.docs.filter(
-    (d) => d.id.startsWith("sim_") && !stillReferenced.has(d.id),
-  );
+  const orphans = usersSnap.docs.filter((d) => {
+    if (stillReferenced.has(d.id)) return false;
+    if (d.id.startsWith("sim_")) return true;
+    // Also catch older seeds where the uid doesn't follow sim_* but the
+    // email is the unambiguous synthetic marker.
+    const data = d.data() as { isTestAccount?: boolean; email?: string };
+    return (
+      data.isTestAccount === true &&
+      typeof data.email === "string" &&
+      data.email.toLowerCase().endsWith("@sim.pari")
+    );
+  });
   await Promise.all(
     orphans.flatMap((d) => [
       deleteDoc(d.ref).catch(() => {}),
