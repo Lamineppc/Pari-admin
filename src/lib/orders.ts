@@ -21,6 +21,7 @@ export type OrderStatus =
   | "awaiting_quote"
   | "quoted"
   | "paid"
+  | "awaiting_pickup"
   | "in_transit"
   | "delivered"
   | "paid_out"
@@ -57,7 +58,9 @@ export type MarketplaceOrder = {
   platformFeePercent: number | null;
   courierId: string | null;
   pin: string | null;
+  pickupPin: string | null;
   createdAt: Date | null;
+  awaitingPickupAt: Date | null;
   quotedAt: Date | null;
   paidAt: Date | null;
   inTransitAt: Date | null;
@@ -105,7 +108,10 @@ function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
     platformFeePercent: (d.platformFeePercent as number | undefined) ?? null,
     courierId: (d.courierId as string | undefined) ?? null,
     pin: (d.pin as string | undefined) ?? null,
+    pickupPin: (d.pickupPin as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
+    awaitingPickupAt:
+      (d.awaitingPickupAt as Timestamp | undefined)?.toDate() ?? null,
     quotedAt: (d.quotedAt as Timestamp | undefined)?.toDate() ?? null,
     paidAt: (d.paidAt as Timestamp | undefined)?.toDate() ?? null,
     inTransitAt: (d.inTransitAt as Timestamp | undefined)?.toDate() ?? null,
@@ -194,31 +200,42 @@ export async function quoteOrder(
   }
 }
 
-/// Generate a 6-digit numeric PIN, assign the courier, flip status to
-/// in_transit, and notify the buyer with the PIN. The buyer hands the
-/// PIN to the courier on arrival; the courier enters it in the app to
-/// mark delivered (Phase E enforces this via the courier-side rule).
+/// Assign a courier + issue BOTH pins for the two-checkpoint delivery
+/// flow.
+///
+/// * pickupPin — courier tells this to the seller at the pickup point.
+///   Seller types it into the app to release the item (advances
+///   awaiting_pickup → in_transit).
+/// * deliveryPin (stored as `pin`) — buyer tells this to the courier
+///   at drop-off. Courier types it into the app to close the delivery
+///   (advances in_transit → delivered).
+///
+/// Notifies all three parties. Order goes to `awaiting_pickup` (not
+/// straight to `in_transit`) so the pickup checkpoint is a real gate.
 export async function assignCourierAndIssuePin(
   orderId: string,
   courierId: string,
-): Promise<{ pin: string }> {
+): Promise<{ pin: string; pickupPin: string }> {
   if (!courierId.trim()) throw new Error("Pick a courier first.");
   const pin = String(Math.floor(100000 + Math.random() * 900000));
+  const pickupPin = String(Math.floor(100000 + Math.random() * 900000));
   await updateDoc(doc(firestore, "orders", orderId), {
     courierId,
     pin,
-    status: "in_transit",
-    inTransitAt: serverTimestamp(),
+    pickupPin,
+    status: "awaiting_pickup",
+    awaitingPickupAt: serverTimestamp(),
   });
   await writeAudit({
     action: "assign_courier_and_issue_pin",
     targetType: "order",
     targetId: orderId,
     test: false,
-    after: { courierId, pin: "***" }, // don't leak PIN into audit
+    after: { courierId, pin: "***", pickupPin: "***" },
   });
   const orderSnap = await getDoc(doc(firestore, "orders", orderId));
   const buyerId = String(orderSnap.data()?.buyerId ?? "");
+  const sellerId = String(orderSnap.data()?.sellerId ?? "");
   if (buyerId) {
     await addDoc(collection(firestore, "users", buyerId, "notifications"), {
       type: "order_delivery_pin",
@@ -229,7 +246,33 @@ export async function assignCourierAndIssuePin(
       metadata: { orderId, pin },
     });
   }
-  return { pin };
+  if (courierId) {
+    await addDoc(
+      collection(firestore, "users", courierId, "notifications"),
+      {
+        type: "delivery_pickup_pin",
+        title: "New pickup assigned",
+        body: `Say this PIN to the seller so they can release the item: ${pickupPin}. Do not share it with anyone else.`,
+        isRead: false,
+        createdAt: serverTimestamp(),
+        metadata: { orderId, pickupPin },
+      },
+    );
+  }
+  if (sellerId) {
+    await addDoc(
+      collection(firestore, "users", sellerId, "notifications"),
+      {
+        type: "order_awaiting_pickup",
+        title: "Courier on the way to collect",
+        body: "A courier is on the way to pick up the item. They'll give you a PIN — enter it in the app to hand it over.",
+        isRead: false,
+        createdAt: serverTimestamp(),
+        metadata: { orderId },
+      },
+    );
+  }
+  return { pin, pickupPin };
 }
 
 /// Super-admin cancel — allowed at any pre-delivered state. Refunds

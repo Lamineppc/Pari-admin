@@ -33,6 +33,8 @@ function statusLabel(s: OrderStatus): string {
       return "Quoted";
     case "paid":
       return "Paid";
+    case "awaiting_pickup":
+      return "Awaiting pickup";
     case "in_transit":
       return "In transit";
     case "delivered":
@@ -223,6 +225,9 @@ export default function OrderDetailPage() {
 
       {order.status === "awaiting_quote" && <QuotePanel order={order} />}
       {order.status === "paid" && <AssignCourierPanel order={order} />}
+      {order.status === "awaiting_pickup" && (
+        <AwaitingPickupPanel order={order} />
+      )}
       {order.status === "in_transit" && <InTransitPanel order={order} />}
       {order.status === "delivered" && <DeliveredPanel order={order} />}
       {order.status === "paid_out" && (
@@ -231,11 +236,13 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {["awaiting_quote", "quoted", "paid", "in_transit"].includes(
+      {["awaiting_quote", "quoted", "paid", "awaiting_pickup", "in_transit"].includes(
         order.status,
       ) && (
         <section className="flex flex-wrap gap-2">
-          {(order.status === "paid" || order.status === "in_transit") && (
+          {(order.status === "paid" ||
+            order.status === "awaiting_pickup" ||
+            order.status === "in_transit") && (
             <RefundButton orderId={order.id} />
           )}
           <CancelButton orderId={order.id} />
@@ -247,6 +254,7 @@ export default function OrderDetailPage() {
         <div>Created: {fmtDate(order.createdAt)}</div>
         <div>Quoted: {fmtDate(order.quotedAt)}</div>
         <div>Paid: {fmtDate(order.paidAt)}</div>
+        <div>Awaiting pickup: {fmtDate(order.awaitingPickupAt)}</div>
         <div>In transit: {fmtDate(order.inTransitAt)}</div>
         <div>Delivered: {fmtDate(order.deliveredAt)}</div>
         <div>Paid out: {fmtDate(order.paidOutAt)}</div>
@@ -307,7 +315,10 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
   const [couriers, setCouriers] = useState<CourierCandidate[] | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const [issuedPin, setIssuedPin] = useState<string | null>(null);
+  const [issuedPins, setIssuedPins] = useState<{
+    pin: string;
+    pickupPin: string;
+  } | null>(null);
 
   useEffect(() => {
     listCouriers()
@@ -322,9 +333,9 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
     }
     setBusy(true);
     try {
-      const { pin } = await assignCourierAndIssuePin(order.id, selected);
-      setIssuedPin(pin);
-      toast.success("Courier assigned. PIN sent to buyer.");
+      const res = await assignCourierAndIssuePin(order.id, selected);
+      setIssuedPins(res);
+      toast.success("Courier assigned. PINs sent to buyer + courier.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Assign failed.");
     } finally {
@@ -369,32 +380,86 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
           </Button>
         </div>
       )}
-      {issuedPin && (
-        <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            PIN for buyer
-          </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="font-mono text-2xl font-bold tracking-widest">
-              {issuedPin}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                navigator.clipboard.writeText(issuedPin);
-                toast.success("PIN copied.");
-              }}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            Sent to buyer via in-app notification. Keep this admin-side too in
-            case the buyer needs a reminder.
-          </div>
+      {issuedPins && (
+        <div className="mt-3 space-y-2">
+          <PinCallout
+            title="Delivery PIN (buyer)"
+            pin={issuedPins.pin}
+            explainer="Buyer says this PIN to the courier at drop-off. Courier types it in-app to close the delivery."
+          />
+          <PinCallout
+            title="Pickup PIN (courier)"
+            pin={issuedPins.pickupPin}
+            explainer="Courier says this PIN to the seller at pickup. Seller types it in-app to release the item."
+          />
         </div>
       )}
+    </section>
+  );
+}
+
+function PinCallout({
+  title,
+  pin,
+  explainer,
+}: {
+  title: string;
+  pin: string;
+  explainer: string;
+}) {
+  return (
+    <div className="rounded-md border border-primary/40 bg-primary/5 p-3">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        {title}
+      </div>
+      <div className="mt-1 flex items-center gap-2">
+        <span className="font-mono text-2xl font-bold tracking-widest">
+          {pin}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            navigator.clipboard.writeText(pin);
+            toast.success("PIN copied.");
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{explainer}</div>
+    </div>
+  );
+}
+
+function AwaitingPickupPanel({ order }: { order: MarketplaceOrder }) {
+  return (
+    <section className="rounded-md border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/40">
+      <div className="flex items-center gap-2">
+        <Truck className="h-4 w-4 text-orange-700 dark:text-orange-300" />
+        <div className="text-sm font-medium text-orange-800 dark:text-orange-200">
+          Awaiting pickup
+        </div>
+      </div>
+      <div className="mt-1 text-xs text-orange-700 dark:text-orange-300">
+        Courier: <span className="font-mono">{order.courierId?.slice(0, 8)}</span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {order.pickupPin && (
+          <PinCallout
+            title="Pickup PIN (courier)"
+            pin={order.pickupPin}
+            explainer="Courier says this PIN to the seller at pickup. Order flips to In transit once the seller enters it in the app."
+          />
+        )}
+        {order.pin && (
+          <PinCallout
+            title="Delivery PIN (buyer)"
+            pin={order.pin}
+            explainer="Buyer will hand this PIN to the courier at drop-off."
+          />
+        )}
+      </div>
     </section>
   );
 }

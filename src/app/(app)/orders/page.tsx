@@ -34,6 +34,7 @@ type Filter =
   | "awaiting_quote"
   | "quoted"
   | "paid"
+  | "awaiting_pickup"
   | "in_transit"
   | "delivered"
   | "paid_out"
@@ -48,6 +49,8 @@ function statusLabel(s: OrderStatus): string {
       return "Quoted";
     case "paid":
       return "Paid";
+    case "awaiting_pickup":
+      return "Awaiting pickup";
     case "in_transit":
       return "In transit";
     case "delivered":
@@ -69,6 +72,8 @@ function statusTone(s: OrderStatus): string {
       return "bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:border-blue-900";
     case "paid":
       return "bg-purple-50 text-purple-800 border-purple-200 dark:bg-purple-950 dark:text-purple-200 dark:border-purple-900";
+    case "awaiting_pickup":
+      return "bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:border-orange-900";
     case "in_transit":
       return "bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-900";
     case "delivered":
@@ -108,6 +113,7 @@ export default function OrdersPage() {
       "awaiting_quote",
       "quoted",
       "paid",
+      "awaiting_pickup",
       "in_transit",
       "delivered",
       "paid_out",
@@ -160,6 +166,7 @@ export default function OrdersPage() {
     "awaiting_quote",
     "quoted",
     "paid",
+    "awaiting_pickup",
     "in_transit",
     "delivered",
     "paid_out",
