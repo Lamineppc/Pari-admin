@@ -97,7 +97,8 @@ export type AuditAction =
   | "reassign_slot_owner"
   | "force_accept_split"
   | "cancel_pending_split"
-  | "purge_orphan_sim_users";
+  | "purge_orphan_sim_users"
+  | "create_group_for_user";
 
 export type AuditTargetType =
   | "group"

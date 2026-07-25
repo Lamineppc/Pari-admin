@@ -371,6 +371,132 @@ export function computeManagerPromotion(args: {
   return { renamedName, nextManagerUid };
 }
 
+/** Generate a 6-char invite code with the same alphabet as the mobile
+ *  FirestoreService._generateCode so codes drawn from the panel don't
+ *  visually collide with codes from the app. */
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < 6; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+/** Super-admin helper — create a real-money group with `createdBy` set to
+ *  [targetUid], stamping the target as admin at position 1. Mirrors the
+ *  mobile FirestoreService.createGroup flow (one-active-group-per-owner
+ *  gate, group doc + admin member doc + first slot when useSlots) so the
+ *  panel-created group is indistinguishable from a mobile-created one.
+ */
+export async function createGroupForUser(args: {
+  targetUid: string;
+  targetName: string;
+  targetEmail: string;
+  name: string;
+  description: string;
+  amount: number;
+  currency: string;
+  frequency: string;
+  type?: "traditional" | "secured";
+  startDate?: Date | null;
+  city?: string | null;
+  country?: string | null;
+}): Promise<{ groupId: string; inviteCode: string }> {
+  const name = args.name.trim();
+  if (!name) throw new Error("Group name required.");
+  if (!Number.isFinite(args.amount) || args.amount <= 0) {
+    throw new Error("Amount must be a positive number.");
+  }
+  if (!args.targetUid) throw new Error("Target user required.");
+
+  // Same one-active-group rule the mobile enforces client-side.
+  const existing = await getDocs(
+    query(
+      collection(firestore, "groups"),
+      where("createdBy", "==", args.targetUid),
+      where("status", "in", ["active", "paused", "setup"]),
+      limit(1),
+    ),
+  );
+  if (!existing.empty) {
+    throw new Error(
+      "This user already has an active group. One active group per user.",
+    );
+  }
+
+  const type = args.type ?? "traditional";
+  const useSlots = type === "traditional";
+  const inviteCode = generateInviteCode();
+  const groupRef = doc(collection(firestore, "groups"));
+
+  const batch = writeBatch(firestore);
+  batch.set(groupRef, {
+    id: groupRef.id,
+    type,
+    name,
+    description: args.description.trim(),
+    amount: args.amount,
+    currency: args.currency,
+    frequency: args.frequency,
+    startDate: args.startDate ?? null,
+    createdBy: args.targetUid,
+    inviteCode,
+    status: "setup",
+    createdAt: serverTimestamp(),
+    memberCount: 1,
+    memberIds: [args.targetUid],
+    photoUrl: null,
+    city: args.city?.trim() || null,
+    country: args.country?.trim() || null,
+    useSlots,
+    moneyProvider: "orange_money",
+  });
+
+  batch.set(doc(groupRef, "members", args.targetUid), {
+    userId: args.targetUid,
+    name: args.targetName || args.targetEmail || args.targetUid,
+    email: args.targetEmail || "",
+    role: "admin",
+    position: 1,
+    joinedAt: serverTimestamp(),
+  });
+
+  if (useSlots) {
+    const slotRef = doc(collection(groupRef, "slots"));
+    batch.set(slotRef, {
+      position: 1,
+      owners: [
+        {
+          userId: args.targetUid,
+          name: args.targetName || args.targetEmail || args.targetUid,
+          share: 1.0,
+        },
+      ],
+      joinCycle: 1,
+    });
+  }
+
+  await batch.commit();
+
+  await writeAudit({
+    action: "create_group_for_user",
+    targetType: "group",
+    targetId: groupRef.id,
+    test: false,
+    after: {
+      ownerUid: args.targetUid,
+      name,
+      amount: args.amount,
+      currency: args.currency,
+      frequency: args.frequency,
+      type,
+    },
+  });
+
+  return { groupId: groupRef.id, inviteCode };
+}
+
 // Mirrors FirestoreService.transferOwnershipToManager: batch-swaps
 // createdBy + roles, and clears the escalation flag atomically.
 export async function transferOwnershipToManager(groupId: string): Promise<void> {

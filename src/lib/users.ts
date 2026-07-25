@@ -95,6 +95,8 @@ export type UserGroupMembership = {
   joinCycle: number;
   payoutCycle: number | null;
   kicked: boolean;
+  groupStatus: string;
+  isCreator: boolean;
 };
 
 /// Live stream of every group [uid] belongs to. Uses the groups doc's
@@ -118,6 +120,7 @@ export function subscribeUserGroups(
           const memberSnap = await getDoc(doc(g.ref, "members", uid));
           const m = memberSnap.data() ?? {};
           const groupName = String(g.data().name ?? g.id);
+          const gd = g.data();
           return {
             groupId: g.id,
             groupName,
@@ -127,6 +130,8 @@ export function subscribeUserGroups(
             payoutCycle:
               typeof m.payoutCycle === "number" ? m.payoutCycle : null,
             kicked: m.kicked === true,
+            groupStatus: String(gd.status ?? ""),
+            isCreator: gd.createdBy === uid,
           };
         }),
       );

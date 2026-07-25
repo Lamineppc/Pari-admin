@@ -66,6 +66,8 @@ import {
 } from "@/lib/escalation-archive";
 import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createGroupForUser } from "@/lib/groups";
 
 /// Full-page super-admin controls for a single user. Rendered by
 /// /users/[uid]/page.tsx; not a modal — mirrors how the groups detail
@@ -631,7 +633,7 @@ export function UserDetailBody({
       <UserContactPanel uid={user.uid} contact={contact} />
 
       <Separator />
-      <UserGroupsPanel groups={groups} />
+      <UserGroupsPanel groups={groups} user={user} />
 
       <Separator />
       <UserPaymentsPanel payments={payments} />
@@ -1277,12 +1279,48 @@ function ContactRow({
   );
 }
 
-function UserGroupsPanel({ groups }: { groups: UserGroupMembership[] | null }) {
+function UserGroupsPanel({
+  groups,
+  user,
+}: {
+  groups: UserGroupMembership[] | null;
+  user: PlatformUser;
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const activeOwned = (groups ?? []).find(
+    (g) =>
+      g.isCreator &&
+      (g.groupStatus === "active" ||
+        g.groupStatus === "paused" ||
+        g.groupStatus === "setup"),
+  );
+  const blocked = Boolean(activeOwned);
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Group memberships ({groups?.length ?? "…"})
+      <div className="flex items-center gap-2">
+        <div className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Group memberships ({groups?.length ?? "…"})
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={blocked}
+          title={
+            blocked
+              ? `Already admin of "${activeOwned?.groupName}" (${activeOwned?.groupStatus}). One active group per user.`
+              : undefined
+          }
+          onClick={() => setCreateOpen(true)}
+        >
+          Create group for this user
+        </Button>
       </div>
+      {blocked && (
+        <p className="text-[11px] text-muted-foreground">
+          Already admin of an active group ({activeOwned?.groupName}). Deactivate
+          or delete that one before creating another.
+        </p>
+      )}
       {groups === null && (
         <div className="text-xs text-muted-foreground">Loading…</div>
       )}
@@ -1320,7 +1358,183 @@ function UserGroupsPanel({ groups }: { groups: UserGroupMembership[] | null }) {
           ))}
         </div>
       )}
+      {createOpen && (
+        <CreateGroupForUserDialog
+          user={user}
+          onClose={() => setCreateOpen(false)}
+        />
+      )}
     </section>
+  );
+}
+
+function CreateGroupForUserDialog({
+  user,
+  onClose,
+}: {
+  user: PlatformUser;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("CFA");
+  const [frequency, setFrequency] = useState("Monthly");
+  const [type, setType] = useState<"traditional" | "secured">("traditional");
+  const [startDate, setStartDate] = useState("");
+  const [city, setCity] = useState(user.city ?? "");
+  const [country, setCountry] = useState(user.country ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const amt = Number(amount);
+    if (!name.trim()) return toast.error("Group name required.");
+    if (!Number.isFinite(amt) || amt <= 0)
+      return toast.error("Amount must be a positive number.");
+    setBusy(true);
+    try {
+      const { groupId } = await createGroupForUser({
+        targetUid: user.uid,
+        targetName: user.name,
+        targetEmail: user.email,
+        name,
+        description,
+        amount: amt,
+        currency,
+        frequency,
+        type,
+        startDate: startDate ? new Date(startDate) : null,
+        city: city || null,
+        country: country || null,
+      });
+      toast.success("Group created on behalf of this user.");
+      onClose();
+      router.push(`/groups/${groupId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Create group failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">
+              Create group for {user.name || user.email}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Provisions a real-money group with this user as its admin. The
+              one-active-group-per-user rule still applies.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <Row label="Name">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Family tontine"
+            />
+          </Row>
+          <Row label="Description">
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional"
+            />
+          </Row>
+          <Row label="Amount">
+            <Input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="20000"
+            />
+          </Row>
+          <Row label="Currency">
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="CFA">CFA</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+            </select>
+          </Row>
+          <Row label="Frequency">
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Biweekly">Biweekly</option>
+              <option value="Monthly">Monthly</option>
+            </select>
+          </Row>
+          <Row label="Type">
+            <select
+              value={type}
+              onChange={(e) =>
+                setType(e.target.value as "traditional" | "secured")
+              }
+              className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
+            >
+              <option value="traditional">Traditional (rotating)</option>
+              <option value="secured">Secured</option>
+            </select>
+          </Row>
+          <Row label="Start date">
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </Row>
+          <Row label="City">
+            <Input
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="Bamako"
+            />
+          </Row>
+          <Row label="Country">
+            <Input
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              placeholder="Mali"
+            />
+          </Row>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy || !name.trim()}>
+            {busy ? "Creating…" : "Create group"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="w-24 text-xs text-muted-foreground">{label}</label>
+      {children}
+    </div>
   );
 }
 
