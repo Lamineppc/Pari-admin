@@ -24,7 +24,7 @@ import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { subscribeStores, type Store } from "@/lib/stores";
 import { StoreDetailSheet } from "../store-applications/store-detail-sheet";
 
-type Tab = "groups" | "users" | "stores";
+type Tab = "all" | "groups" | "users" | "stores";
 type SortKey = "age" | "money" | "size";
 
 function fmtAge(d: Date | null): string {
@@ -52,7 +52,7 @@ function KindBadge({ kind }: { kind: string }) {
 
 export default function EscalationsPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("groups");
+  const [tab, setTab] = useState<Tab>("all");
 
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
@@ -151,6 +151,13 @@ export default function EscalationsPage() {
 
       <div className="flex items-center gap-1 border-b">
         <TabButton
+          active={tab === "all"}
+          onClick={() => setTab("all")}
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
+          label="All"
+          count={activeGroupFlags + caretakers + activeUserFlags + activeStoreFlags}
+        />
+        <TabButton
           active={tab === "groups"}
           onClick={() => setTab("groups")}
           icon={<AlertTriangle className="h-3.5 w-3.5" />}
@@ -172,6 +179,115 @@ export default function EscalationsPage() {
           count={activeStoreFlags}
         />
       </div>
+
+      {tab === "all" && (
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Target</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Age</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {escalatedGroups === null || escalatedUsers === null || escalatedStores === null ? (
+                <TableRow>
+                  <TableCell colSpan={5}>
+                    <Skeleton className="h-6 w-full" />
+                  </TableCell>
+                </TableRow>
+              ) : escalatedGroups.length + escalatedUsers.length + escalatedStores.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                    Nothing to escalate.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                <>
+                  {escalatedGroups.map((g) => (
+                    <TableRow
+                      key={`g_${g.id}`}
+                      onClick={() => router.push(`/groups/${g.id}`)}
+                      className="cursor-pointer"
+                    >
+                      <TableCell className="font-medium">{g.name}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">Group</TableCell>
+                      <TableCell>
+                        {g.adminEscalationFlag ? (
+                          <EscalationBadge flag={g.adminEscalationFlag} />
+                        ) : g.caretakerBy ? (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
+                            <ShieldPlus className="h-3 w-3" /> Caretaker
+                          </span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-md truncate text-sm text-muted-foreground">
+                        {g.adminEscalationReason || "—"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {fmtAge(g.adminEscalationFlaggedAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {escalatedUsers.map((u) => (
+                    <TableRow
+                      key={`u_${u.uid}`}
+                      onClick={() => router.push(`/users/${u.uid}`)}
+                      className="cursor-pointer"
+                    >
+                      <TableCell className="font-medium">
+                        <div className="flex flex-col">
+                          <span>{u.name || "(no name)"}</span>
+                          <span className="text-[11px] text-muted-foreground">{u.email}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">User</TableCell>
+                      <TableCell>
+                        {u.escalationFlag && <KindBadge kind={u.escalationFlag} />}
+                      </TableCell>
+                      <TableCell className="max-w-md truncate text-sm text-muted-foreground">
+                        {u.escalationReason || "—"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {fmtAge(u.escalationFlaggedAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {escalatedStores.map((s) => (
+                    <TableRow
+                      key={`s_${s.id}`}
+                      onClick={() => setOpenStore(s)}
+                      className="cursor-pointer"
+                    >
+                      <TableCell className="font-medium">
+                        <div className="flex flex-col">
+                          <span>{s.storeName || "(no name)"}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {s.ownerName || s.ownerId}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">Store</TableCell>
+                      <TableCell>
+                        {s.escalationFlag && <KindBadge kind={s.escalationFlag} />}
+                      </TableCell>
+                      <TableCell className="max-w-md truncate text-sm text-muted-foreground">
+                        {s.escalationReason || "—"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {fmtAge(s.escalationFlaggedAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {tab === "groups" && (
         <>
@@ -283,7 +399,7 @@ export default function EscalationsPage() {
               {escalatedUsers?.map((u) => (
                 <TableRow
                   key={u.uid}
-                  onClick={() => router.push(`/users?uid=${u.uid}`)}
+                  onClick={() => router.push(`/users/${u.uid}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="font-medium">
