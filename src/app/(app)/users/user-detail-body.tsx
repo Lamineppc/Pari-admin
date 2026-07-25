@@ -344,12 +344,28 @@ export function UserDetailBody({
             <Badge
               variant="outline"
               className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+              title={user.escalationReason ?? undefined}
             >
               ⚠ {user.escalationFlag.replace(/_/g, " ")}
             </Badge>
           )}
         </div>
         <p className="text-sm text-muted-foreground">{user.email}</p>
+        {user.escalationFlag && (
+          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <div className="mb-1 font-medium">
+              Escalation: {user.escalationFlag.replace(/_/g, " ")}
+              {user.escalationFlaggedAt && (
+                <span className="ml-2 text-xs opacity-70">
+                  · {user.escalationFlaggedAt.toLocaleString()}
+                </span>
+              )}
+            </div>
+            <div className="whitespace-pre-wrap">
+              {user.escalationReason?.trim() || "No reason recorded."}
+            </div>
+          </div>
+        )}
       </header>
 
       <div className="grid grid-cols-1 gap-3 rounded-md border p-4 sm:grid-cols-3">
