@@ -68,6 +68,8 @@ import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createGroupForUser } from "@/lib/groups";
+import { CountrySelect } from "@/components/country-select";
+import { findCountry } from "@/lib/countries";
 
 /// Full-page super-admin controls for a single user. Rendered by
 /// /users/[uid]/page.tsx; not a modal — mirrors how the groups detail
@@ -1384,7 +1386,15 @@ function CreateGroupForUserDialog({
   const [type, setType] = useState<"traditional" | "secured">("traditional");
   const [startDate, setStartDate] = useState("");
   const [city, setCity] = useState(user.city ?? "");
-  const [country, setCountry] = useState(user.country ?? "");
+  const initialCountryEntry = user.country
+    ? findCountry({ name: user.country })
+    : null;
+  const [countryIso, setCountryIso] = useState<string | null>(
+    initialCountryEntry?.iso ?? null,
+  );
+  const [countryName, setCountryName] = useState(
+    initialCountryEntry?.name ?? user.country ?? "",
+  );
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -1406,7 +1416,7 @@ function CreateGroupForUserDialog({
         type,
         startDate: startDate ? new Date(startDate) : null,
         city: city || null,
-        country: country || null,
+        country: countryName || null,
       });
       toast.success("Group created on behalf of this user.");
       onClose();
@@ -1509,10 +1519,13 @@ function CreateGroupForUserDialog({
             />
           </Row>
           <Row label="Country">
-            <Input
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              placeholder="Mali"
+            <CountrySelect
+              value={countryIso}
+              onChange={(iso, name) => {
+                setCountryIso(iso);
+                setCountryName(name);
+              }}
+              className="flex-1"
             />
           </Row>
         </div>

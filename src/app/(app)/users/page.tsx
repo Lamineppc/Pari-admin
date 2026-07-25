@@ -42,6 +42,9 @@ import {
 } from "@/lib/users";
 import { useAuth } from "@/lib/auth-context";
 import { BulkActionBar } from "@/components/bulk-action-bar";
+import { CountrySelect } from "@/components/country-select";
+import { PhoneInput } from "@/components/phone-input";
+import { findCountry } from "@/lib/countries";
 
 export default function UsersPage() {
   const { user: authUser } = useAuth();
@@ -719,8 +722,13 @@ function CreateUserDialog({
   const [username, setUsername] = useState("");
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
-  const [country, setCountry] = useState("");
+  const [countryIso, setCountryIso] = useState("ML");
+  const [countryName, setCountryName] = useState(
+    () => findCountry({ iso: "ML" })?.name ?? "",
+  );
   const [city, setCity] = useState("");
+  const [phoneIso, setPhoneIso] = useState("ML");
+  const [whatsappIso, setWhatsappIso] = useState("ML");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -746,7 +754,7 @@ function CreateUserDialog({
         username: username.trim() || undefined,
         phone: phone.trim() || undefined,
         whatsapp: whatsapp.trim() || undefined,
-        country: country.trim() || undefined,
+        country: countryName || undefined,
         city: city.trim() || undefined,
       });
       toast.success(
@@ -806,28 +814,33 @@ function CreateUserDialog({
           </div>
           <div className="flex items-center gap-2">
             <label className="w-24 text-xs text-muted-foreground">Phone</label>
-            <Input
-              type="tel"
+            <PhoneInput
+              isoCountry={phoneIso}
+              onIsoChange={setPhoneIso}
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+22370123456 (E.164)"
+              onChange={setPhone}
+              className="flex-1"
             />
           </div>
           <div className="flex items-center gap-2">
             <label className="w-24 text-xs text-muted-foreground">WhatsApp</label>
-            <Input
-              type="tel"
+            <PhoneInput
+              isoCountry={whatsappIso}
+              onIsoChange={setWhatsappIso}
               value={whatsapp}
-              onChange={(e) => setWhatsapp(e.target.value)}
-              placeholder="+22370123456 (E.164)"
+              onChange={setWhatsapp}
+              className="flex-1"
             />
           </div>
           <div className="flex items-center gap-2">
             <label className="w-24 text-xs text-muted-foreground">Country</label>
-            <Input
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              placeholder="Mali"
+            <CountrySelect
+              value={countryIso}
+              onChange={(iso, name) => {
+                setCountryIso(iso);
+                setCountryName(name);
+              }}
+              className="flex-1"
             />
           </div>
           <div className="flex items-center gap-2">
