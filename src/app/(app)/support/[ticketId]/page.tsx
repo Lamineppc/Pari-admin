@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
@@ -272,14 +271,12 @@ export default function TicketDetailPage() {
               {ticket.userId}
             </div>
             <Button
-              asChild
               variant="outline"
               size="sm"
-              className="mt-3 w-full"
+              className="mt-3 w-full justify-between"
+              onClick={() => router.push(`/users/${ticket.userId}`)}
             >
-              <Link href={`/users/${ticket.userId}`}>
-                Open user <ArrowRight className="ml-auto h-4 w-4" />
-              </Link>
+              Open user <ArrowRight className="h-4 w-4" />
             </Button>
           </section>
 
@@ -292,14 +289,12 @@ export default function TicketDetailPage() {
                 {ticket.groupId}
               </div>
               <Button
-                asChild
                 variant="outline"
                 size="sm"
-                className="mt-3 w-full"
+                className="mt-3 w-full justify-between"
+                onClick={() => router.push(`/groups/${ticket.groupId!}`)}
               >
-                <Link href={`/groups/${ticket.groupId}`}>
-                  Open group <ArrowRight className="ml-auto h-4 w-4" />
-                </Link>
+                Open group <ArrowRight className="h-4 w-4" />
               </Button>
             </section>
           )}
