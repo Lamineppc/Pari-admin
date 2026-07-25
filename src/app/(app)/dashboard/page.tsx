@@ -363,7 +363,7 @@ function TopUpMyWalletButton() {
     setRunning(true);
     try {
       await mockPaymentProvider.topUp({
-        walletId: `user_${uid}`,
+        walletId: `user:${uid}`,
         amount,
       });
       toast.success(`Topped up ${amount.toLocaleString()} CFA to your wallet.`);

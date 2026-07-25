@@ -348,7 +348,7 @@ export async function payOutOrderToSeller(
   }
 
   const escrowRef = doc(firestore, "mockWallets", `mkt_escrow_${currency}`);
-  const sellerWalletRef = doc(firestore, "mockWallets", `user_${sellerId}`);
+  const sellerWalletRef = doc(firestore, "mockWallets", `user:${sellerId}`);
   await runTransaction(firestore, async (tx) => {
     const eSnap = await tx.get(escrowRef);
     const sSnap = await tx.get(sellerWalletRef);
@@ -435,7 +435,7 @@ export async function refundOrder(orderId: string, reason?: string): Promise<voi
   const total = items + deliveryFee;
 
   const escrowRef = doc(firestore, "mockWallets", `mkt_escrow_${currency}`);
-  const buyerWalletRef = doc(firestore, "mockWallets", `user_${buyerId}`);
+  const buyerWalletRef = doc(firestore, "mockWallets", `user:${buyerId}`);
   await runTransaction(firestore, async (tx) => {
     const eSnap = await tx.get(escrowRef);
     const bSnap = await tx.get(buyerWalletRef);
