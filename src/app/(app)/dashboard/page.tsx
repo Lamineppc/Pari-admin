@@ -13,7 +13,9 @@ import { subscribeStores, type Store as StoreDoc } from "@/lib/stores";
 import { subscribeAuditLog, type AuditEntry } from "@/lib/audit";
 import { healAllGroups } from "@/lib/heal";
 import { purgeOrphanSimUsers } from "@/lib/mock-groups";
-import { Trash2, Package } from "lucide-react";
+import { Trash2, Package, Wallet } from "lucide-react";
+import { firebaseAuth } from "@/lib/firebase";
+import { mockPaymentProvider } from "@/lib/money/mock/mock-payment-provider";
 import {
   isPayoutReady,
   subscribeOrders,
@@ -94,6 +96,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <TopUpMyWalletButton />
           <PurgeOrphanSimButton />
           <HealAllButton />
         </div>
@@ -337,6 +340,51 @@ function StatCard({
     </Card>
   );
   return href ? <Link href={href}>{inner}</Link> : inner;
+}
+
+function TopUpMyWalletButton() {
+  const [running, setRunning] = useState(false);
+  async function run() {
+    const uid = firebaseAuth.currentUser?.uid;
+    if (!uid) {
+      toast.error("Sign in first.");
+      return;
+    }
+    const raw = window.prompt(
+      "Top up your mock wallet by how much CFA? (You'll need this to test the marketplace checkout while Orange Money is off.)",
+      "100000",
+    );
+    if (raw === null) return;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Amount must be positive.");
+      return;
+    }
+    setRunning(true);
+    try {
+      await mockPaymentProvider.topUp({
+        walletId: `user_${uid}`,
+        amount,
+      });
+      toast.success(`Topped up ${amount.toLocaleString()} CFA to your wallet.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Top-up failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={running}
+      onClick={run}
+      className="h-9"
+    >
+      <Wallet className="h-4 w-4" />
+      {running ? "Topping up…" : "Top up my wallet"}
+    </Button>
+  );
 }
 
 function PurgeOrphanSimButton() {
