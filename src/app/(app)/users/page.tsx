@@ -56,6 +56,8 @@ export default function UsersPage() {
   );
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
   const [busy, setBusy] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -132,6 +134,14 @@ export default function UsersPage() {
     return sorted;
   }, [users, q, filter, sortKey, sortDir]);
 
+  useEffect(() => {
+    setPage(0);
+  }, [q, filter, sortKey, sortDir]);
+
+  const totalPages = filtered ? Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)) : 1;
+  const pageStart = page * PAGE_SIZE;
+  const paged = filtered ? filtered.slice(pageStart, pageStart + PAGE_SIZE) : null;
+
   const counts = useMemo(() => {
     if (!users) return null;
     return {
@@ -144,7 +154,7 @@ export default function UsersPage() {
   }, [users]);
 
   const allVisibleChecked =
-    filtered !== null && filtered.length > 0 && filtered.every((u) => checkedIds.has(u.uid));
+    paged !== null && paged.length > 0 && paged.every((u) => checkedIds.has(u.uid));
 
   function toggleOne(uid: string) {
     setCheckedIds((prev) => {
@@ -156,13 +166,13 @@ export default function UsersPage() {
   }
 
   function toggleAllVisible() {
-    if (!filtered) return;
+    if (!paged) return;
     setCheckedIds((prev) => {
       const next = new Set(prev);
       if (allVisibleChecked) {
-        for (const u of filtered) next.delete(u.uid);
+        for (const u of paged) next.delete(u.uid);
       } else {
-        for (const u of filtered) next.add(u.uid);
+        for (const u of paged) next.add(u.uid);
       }
       return next;
     });
@@ -482,7 +492,8 @@ export default function UsersPage() {
               />
               <TableHead>Email</TableHead>
               <TableHead>Username</TableHead>
-              <TableHead>Location</TableHead>
+              <TableHead>City</TableHead>
+              <TableHead>Country</TableHead>
               <SortableHead
                 label="Last active"
                 active={sortKey === "lastActive"}
@@ -503,13 +514,13 @@ export default function UsersPage() {
             {filtered === null && <LoadingRows />}
             {filtered !== null && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="h-24 text-center text-sm text-muted-foreground">
                   {q ? "No users match your search." : "No users yet."}
                 </TableCell>
               </TableRow>
             )}
-            {filtered?.map((u) => {
-              const location = [u.city, u.state, u.country].filter(Boolean).join(", ");
+            {paged?.map((u) => {
+              const cityLine = [u.city, u.state].filter(Boolean).join(", ");
               const isChecked = checkedIds.has(u.uid);
               return (
                 <TableRow
@@ -536,7 +547,10 @@ export default function UsersPage() {
                     {u.username ?? "—"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {location || "—"}
+                    {cityLine || "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {u.country || "—"}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {formatRelative(u.lastActiveAt)}
@@ -571,6 +585,35 @@ export default function UsersPage() {
           </TableBody>
         </Table>
       </div>
+
+      {filtered && filtered.length > 0 && (
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <div>
+            Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)} of {filtered.length}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="tabular-nums">
+              Page {page + 1} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       <BulkActionBar count={checkedIds.size} onClear={() => setCheckedIds(new Set())}>
         <Button
@@ -948,7 +991,7 @@ function LoadingRows() {
     <>
       {[0, 1, 2, 3].map((i) => (
         <TableRow key={i}>
-          <TableCell colSpan={7}>
+          <TableCell colSpan={8}>
             <Skeleton className="h-6 w-full" />
           </TableCell>
         </TableRow>
