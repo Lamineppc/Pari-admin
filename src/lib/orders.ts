@@ -154,6 +154,7 @@ export function subscribeOrderPins(
       deliveryPin = (snap.data()?.pin as string | undefined) ?? null;
       cb({ deliveryPin, pickupPin });
     },
+    (err) => console.error("[subscribeOrderPins] delivery", err),
   );
   const unsub2 = onSnapshot(
     doc(firestore, "orders", orderId, "secure", "pickup"),
@@ -161,10 +162,28 @@ export function subscribeOrderPins(
       pickupPin = (snap.data()?.pin as string | undefined) ?? null;
       cb({ deliveryPin, pickupPin });
     },
+    (err) => console.error("[subscribeOrderPins] pickup", err),
+  );
+  // Fallback for legacy orders whose PINs still live on the main order doc.
+  const unsub3 = onSnapshot(
+    doc(firestore, "orders", orderId),
+    (snap) => {
+      const d = snap.data() ?? {};
+      if (!deliveryPin && typeof d.pin === "string") {
+        deliveryPin = d.pin;
+        cb({ deliveryPin, pickupPin });
+      }
+      if (!pickupPin && typeof d.pickupPin === "string") {
+        pickupPin = d.pickupPin;
+        cb({ deliveryPin, pickupPin });
+      }
+    },
+    (err) => console.error("[subscribeOrderPins] order", err),
   );
   return () => {
     unsub1();
     unsub2();
+    unsub3();
   };
 }
 
