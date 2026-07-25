@@ -329,7 +329,15 @@ const hardDeleteUserFn = httpsCallable<
   { ok: boolean }
 >(firebaseFunctions, "hardDeleteUser");
 const createUserFn = httpsCallable<
-  { email: string; name?: string; password?: string },
+  {
+    email: string;
+    name?: string;
+    password?: string;
+    username?: string;
+    phone?: string;
+    whatsapp?: string;
+    country?: string;
+  },
   { uid: string }
 >(firebaseFunctions, "createUserAsSuperAdmin");
 const generateResetLinkFn = httpsCallable<
@@ -758,6 +766,10 @@ export async function createUserAsSuperAdmin(args: {
   email: string;
   name?: string;
   password?: string;
+  username?: string;
+  phone?: string;
+  whatsapp?: string;
+  country?: string;
 }): Promise<string> {
   const res = await createUserFn(args);
   const uid = res.data.uid;

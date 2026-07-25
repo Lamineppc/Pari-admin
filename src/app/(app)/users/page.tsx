@@ -716,6 +716,10 @@ function CreateUserDialog({
 }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [phone, setPhone] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [country, setCountry] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -724,12 +728,24 @@ function CreateUserDialog({
       toast.error("Email required.");
       return;
     }
+    if (phone.trim() && !/^\+\d{6,15}$/.test(phone.trim())) {
+      toast.error("Phone must be in E.164 format (e.g. +22370123456).");
+      return;
+    }
+    if (whatsapp.trim() && !/^\+\d{6,15}$/.test(whatsapp.trim())) {
+      toast.error("WhatsApp must be in E.164 format (e.g. +22370123456).");
+      return;
+    }
     setBusy(true);
     try {
       const uid = await createUserAsSuperAdmin({
         email: email.trim(),
         name: name.trim() || undefined,
         password: password.trim() || undefined,
+        username: username.trim() || undefined,
+        phone: phone.trim() || undefined,
+        whatsapp: whatsapp.trim() || undefined,
+        country: country.trim() || undefined,
       });
       toast.success(
         password.trim()
@@ -776,6 +792,40 @@ function CreateUserDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Display name"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Username</label>
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value.toLowerCase())}
+              placeholder="handle (login identifier)"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Phone</label>
+            <Input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+22370123456 (E.164)"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">WhatsApp</label>
+            <Input
+              type="tel"
+              value={whatsapp}
+              onChange={(e) => setWhatsapp(e.target.value)}
+              placeholder="+22370123456 (E.164)"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">Country</label>
+            <Input
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              placeholder="Mali"
             />
           </div>
           <div className="flex items-center gap-2">
