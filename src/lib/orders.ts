@@ -8,6 +8,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   type QueryDocumentSnapshot,
@@ -57,8 +58,6 @@ export type MarketplaceOrder = {
   deliveryFee: number | null;
   platformFeePercent: number | null;
   courierId: string | null;
-  pin: string | null;
-  pickupPin: string | null;
   createdAt: Date | null;
   awaitingPickupAt: Date | null;
   quotedAt: Date | null;
@@ -107,8 +106,6 @@ function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
     deliveryFee: (d.deliveryFee as number | undefined) ?? null,
     platformFeePercent: (d.platformFeePercent as number | undefined) ?? null,
     courierId: (d.courierId as string | undefined) ?? null,
-    pin: (d.pin as string | undefined) ?? null,
-    pickupPin: (d.pickupPin as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
     awaitingPickupAt:
       (d.awaitingPickupAt as Timestamp | undefined)?.toDate() ?? null,
@@ -143,6 +140,32 @@ export function subscribeOrders(
     (s) => cb(s.docs.map(toOrder)),
     (err) => onError?.(err),
   );
+}
+
+export function subscribeOrderPins(
+  orderId: string,
+  cb: (pins: { deliveryPin: string | null; pickupPin: string | null }) => void,
+): () => void {
+  let deliveryPin: string | null = null;
+  let pickupPin: string | null = null;
+  const unsub1 = onSnapshot(
+    doc(firestore, "orders", orderId, "secure", "delivery"),
+    (snap) => {
+      deliveryPin = (snap.data()?.pin as string | undefined) ?? null;
+      cb({ deliveryPin, pickupPin });
+    },
+  );
+  const unsub2 = onSnapshot(
+    doc(firestore, "orders", orderId, "secure", "pickup"),
+    (snap) => {
+      pickupPin = (snap.data()?.pin as string | undefined) ?? null;
+      cb({ deliveryPin, pickupPin });
+    },
+  );
+  return () => {
+    unsub1();
+    unsub2();
+  };
 }
 
 export function subscribeOrder(
@@ -219,10 +242,22 @@ export async function assignCourierAndIssuePin(
   if (!courierId.trim()) throw new Error("Pick a courier first.");
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   const pickupPin = String(Math.floor(100000 + Math.random() * 900000));
-  await updateDoc(doc(firestore, "orders", orderId), {
+  // PINs go into secured subcollections — seller has zero read
+  // access to either. Rules validate the caller-submitted pin
+  // against these subdocs at transition time.
+  const orderRef = doc(firestore, "orders", orderId);
+  await Promise.all([
+    setDoc(doc(orderRef, "secure", "delivery"), {
+      pin,
+      updatedAt: serverTimestamp(),
+    }),
+    setDoc(doc(orderRef, "secure", "pickup"), {
+      pin: pickupPin,
+      updatedAt: serverTimestamp(),
+    }),
+  ]);
+  await updateDoc(orderRef, {
     courierId,
-    pin,
-    pickupPin,
     status: "awaiting_pickup",
     awaitingPickupAt: serverTimestamp(),
   });

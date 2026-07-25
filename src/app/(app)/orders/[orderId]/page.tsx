@@ -20,6 +20,7 @@ import {
   quoteOrder,
   refundOrder,
   subscribeOrder,
+  subscribeOrderPins,
   type CourierCandidate,
   type MarketplaceOrder,
   type OrderStatus,
@@ -59,6 +60,15 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<MarketplaceOrder | null | undefined>(
     undefined,
   );
+  const [pins, setPins] = useState<{
+    deliveryPin: string | null;
+    pickupPin: string | null;
+  }>({ deliveryPin: null, pickupPin: null });
+
+  useEffect(() => {
+    if (!orderId) return;
+    return subscribeOrderPins(orderId, setPins);
+  }, [orderId]);
 
   useEffect(() => {
     if (!orderId) return;
@@ -226,9 +236,11 @@ export default function OrderDetailPage() {
       {order.status === "awaiting_quote" && <QuotePanel order={order} />}
       {order.status === "paid" && <AssignCourierPanel order={order} />}
       {order.status === "awaiting_pickup" && (
-        <AwaitingPickupPanel order={order} />
+        <AwaitingPickupPanel order={order} pins={pins} />
       )}
-      {order.status === "in_transit" && <InTransitPanel order={order} />}
+      {order.status === "in_transit" && (
+        <InTransitPanel order={order} pins={pins} />
+      )}
       {order.status === "delivered" && <DeliveredPanel order={order} />}
       {order.status === "paid_out" && (
         <div className="rounded-md border p-4 text-sm text-muted-foreground">
@@ -432,7 +444,13 @@ function PinCallout({
   );
 }
 
-function AwaitingPickupPanel({ order }: { order: MarketplaceOrder }) {
+function AwaitingPickupPanel({
+  order,
+  pins,
+}: {
+  order: MarketplaceOrder;
+  pins: { deliveryPin: string | null; pickupPin: string | null };
+}) {
   return (
     <section className="rounded-md border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/40">
       <div className="flex items-center gap-2">
@@ -445,17 +463,17 @@ function AwaitingPickupPanel({ order }: { order: MarketplaceOrder }) {
         Courier: <span className="font-mono">{order.courierId?.slice(0, 8)}</span>
       </div>
       <div className="mt-3 space-y-2">
-        {order.pickupPin && (
+        {pins.pickupPin && (
           <PinCallout
             title="Pickup PIN (courier)"
-            pin={order.pickupPin}
+            pin={pins.pickupPin}
             explainer="Courier says this PIN to the seller at pickup. Order flips to In transit once the seller enters it in the app."
           />
         )}
-        {order.pin && (
+        {pins.deliveryPin && (
           <PinCallout
             title="Delivery PIN (buyer)"
-            pin={order.pin}
+            pin={pins.deliveryPin}
             explainer="Buyer will hand this PIN to the courier at drop-off."
           />
         )}
@@ -464,7 +482,13 @@ function AwaitingPickupPanel({ order }: { order: MarketplaceOrder }) {
   );
 }
 
-function InTransitPanel({ order }: { order: MarketplaceOrder }) {
+function InTransitPanel({
+  order,
+  pins,
+}: {
+  order: MarketplaceOrder;
+  pins: { deliveryPin: string | null; pickupPin: string | null };
+}) {
   return (
     <section className="rounded-md border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
       <div className="flex items-center gap-2">
@@ -475,9 +499,10 @@ function InTransitPanel({ order }: { order: MarketplaceOrder }) {
       </div>
       <div className="mt-1 text-xs text-indigo-700 dark:text-indigo-300">
         Courier: <span className="font-mono">{order.courierId?.slice(0, 8)}</span>
-        {order.pin && (
+        {pins.deliveryPin && (
           <>
-            {" · "}PIN <span className="font-mono">{order.pin}</span>
+            {" · "}Delivery PIN{" "}
+            <span className="font-mono">{pins.deliveryPin}</span>
           </>
         )}
       </div>
