@@ -2285,6 +2285,15 @@ export async function resetGroup(groupId: string): Promise<{
   if (!groupSnap.exists()) {
     throw new Error("Group not found.");
   }
+  // Refuse on real-money groups. Reset deletes every payments + ledger
+  // entry, so any funds that already moved via the real-money provider
+  // would lose their platform-side trail with no refund path. Same guard
+  // shape as kickMember / resetMemberPayout.
+  if (String(groupSnap.data()?.moneyProvider ?? "") !== "mock") {
+    throw new Error(
+      "Real-money group reset needs the Cloud Function refund path (PR 6b–d). Refusing so contributions aren't stranded.",
+    );
+  }
 
   const paymentsCol = collection(firestore, "groups", groupId, "payments");
   const ledgerCol = collection(firestore, "groups", groupId, "ledger");
