@@ -131,7 +131,7 @@ export default function DashboardPage() {
         />
         <StatCard
           title="Payouts due"
-          value={payoutDueCount}
+          value={payoutDueCount ?? undefined}
           icon={Package}
           tone="text-primary"
           description="Delivered orders past the 3-day hold — click to release seller funds."
