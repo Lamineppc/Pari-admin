@@ -234,7 +234,11 @@ export default function OrderDetailPage() {
       <Separator />
 
       {order.status === "awaiting_quote" && <QuotePanel order={order} />}
-      {order.status === "paid" && <AssignCourierPanel order={order} />}
+      {(order.status === "paid" ||
+        order.status === "awaiting_pickup" ||
+        order.status === "in_transit") && (
+        <AssignCourierPanel order={order} />
+      )}
       {order.status === "awaiting_pickup" && (
         <AwaitingPickupPanel order={order} pins={pins} />
       )}
@@ -381,8 +385,14 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
   return (
     <section className="rounded-md border p-4">
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Assign courier + issue PIN
+        {order.courierId ? "Reassign courier" : "Assign courier + issue PIN"}
       </div>
+      {order.courierId && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          Currently assigned: <span className="font-mono">{order.courierId}</span>. Picking a new
+          courier will reissue both PINs and reset status to Awaiting pickup.
+        </p>
+      )}
       <p className="mb-3 text-xs text-muted-foreground">
         The buyer will receive a 6-digit PIN to hand to the courier at drop-off.
         Only the assigned courier can flip the order to delivered by entering the
