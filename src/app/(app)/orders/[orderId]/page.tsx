@@ -241,6 +241,29 @@ export default function OrderDetailPage() {
       {order.status === "in_transit" && (
         <InTransitPanel order={order} pins={pins} />
       )}
+      {(pins.deliveryPin || pins.pickupPin) &&
+        order.status !== "awaiting_pickup" &&
+        order.status !== "in_transit" && (
+          <section className="rounded-md border p-4">
+            <div className="mb-2 text-sm font-medium">Delivery PINs</div>
+            <div className="space-y-2">
+              {pins.pickupPin && (
+                <PinCallout
+                  title="Pickup PIN (courier ↔ seller)"
+                  pin={pins.pickupPin}
+                  explainer="Issued to the courier; used at pickup to release the item."
+                />
+              )}
+              {pins.deliveryPin && (
+                <PinCallout
+                  title="Delivery PIN (buyer ↔ courier)"
+                  pin={pins.deliveryPin}
+                  explainer="Issued to the buyer; used at drop-off to close the delivery."
+                />
+              )}
+            </div>
+          </section>
+        )}
       {order.status === "delivered" && <DeliveredPanel order={order} />}
       {order.status === "paid_out" && (
         <div className="rounded-md border p-4 text-sm text-muted-foreground">
@@ -499,16 +522,22 @@ function InTransitPanel({
       </div>
       <div className="mt-1 text-xs text-indigo-700 dark:text-indigo-300">
         Courier: <span className="font-mono">{order.courierId?.slice(0, 8)}</span>
-        {pins.deliveryPin && (
-          <>
-            {" · "}Delivery PIN{" "}
-            <span className="font-mono">{pins.deliveryPin}</span>
-          </>
-        )}
       </div>
-      <div className="mt-2 text-xs text-indigo-700/80 dark:text-indigo-300/80">
-        Buyer has the PIN. Order flips to <em>Delivered</em> once the courier
-        enters it correctly in their app.
+      <div className="mt-3 space-y-2">
+        {pins.deliveryPin && (
+          <PinCallout
+            title="Delivery PIN (buyer)"
+            pin={pins.deliveryPin}
+            explainer="Buyer says this PIN to the courier at drop-off. Order flips to Delivered once the courier enters it in-app."
+          />
+        )}
+        {pins.pickupPin && (
+          <PinCallout
+            title="Pickup PIN (courier)"
+            pin={pins.pickupPin}
+            explainer="Already used at pickup — shown here for admin reference."
+          />
+        )}
       </div>
     </section>
   );
