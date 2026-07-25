@@ -375,6 +375,10 @@ function HealAllButton() {
       if (r.adminMemberCreated)
         details.push(`${r.adminMemberCreated} admin doc restores`);
       if (r.slotsCreated) details.push(`${r.slotsCreated} slots added`);
+      if (r.orphanSlotsDeleted)
+        details.push(`${r.orphanSlotsDeleted} orphan slots removed`);
+      if (r.memberCountFixed)
+        details.push(`${r.memberCountFixed} member counts fixed`);
       if (r.failed) details.push(`${r.failed} failed`);
       toast.success(details.join(" · "));
     } catch (e) {

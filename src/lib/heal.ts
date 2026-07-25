@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -49,6 +50,8 @@ export type HealReport = {
   cycleFixed: boolean;
   adminMemberCreated: boolean;
   slotsCreated: number;
+  orphanSlotsDeleted: number;
+  memberCountFixed: boolean;
 };
 
 /// Runs the three self-heal routines the mobile app runs on Manage
@@ -69,6 +72,8 @@ export async function healGroup(groupId: string): Promise<HealReport> {
     cycleFixed: false,
     adminMemberCreated: false,
     slotsCreated: 0,
+    orphanSlotsDeleted: 0,
+    memberCountFixed: false,
   };
   const groupRef = doc(firestore, "groups", groupId);
   const groupSnap = await getDoc(groupRef);
@@ -122,41 +127,87 @@ export async function healGroup(groupId: string): Promise<HealReport> {
     }
   }
 
-  // 3. Heal slots
+  // 3. Heal slots + reconcile member counters.
+  const [membersSnap, slotsSnap] = await Promise.all([
+    getDocs(collection(firestore, "groups", groupId, "members")),
+    getDocs(collection(firestore, "groups", groupId, "slots")),
+  ]);
+  const activeMemberIds = new Set<string>();
+  for (const m of membersSnap.docs) {
+    if (m.data().kicked === true) continue;
+    activeMemberIds.add(m.id);
+  }
+
   if (g.useSlots === true) {
-    const [membersSnap, slotsSnap] = await Promise.all([
-      getDocs(collection(firestore, "groups", groupId, "members")),
-      getDocs(collection(firestore, "groups", groupId, "slots")),
-    ]);
-    const ownedUids = new Set<string>();
+    // 3a. Delete orphan slots — any slot with no owner still in the
+    // active member set. Fixes drift where a member was kicked or
+    // removed without their slot being cleaned up (visible on the
+    // panel as "N members but M > N slots").
     for (const d of slotsSnap.docs) {
+      const owners =
+        (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+      const anyActive = owners.some((o) => activeMemberIds.has(String(o?.userId ?? "")));
+      if (!anyActive) {
+        await deleteDoc(d.ref);
+        report.orphanSlotsDeleted++;
+      }
+    }
+
+    // 3b. Seed a fresh solo slot for every active member with no slot
+    // (skips kicked). Uses the surviving slot set — refetch after the
+    // orphan sweep so positions stay contiguous.
+    const survivingSlots = slotsSnap.docs.filter((d) => {
+      const owners =
+        (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
+      return owners.some((o) => activeMemberIds.has(String(o?.userId ?? "")));
+    });
+    const ownedUids = new Set<string>();
+    for (const d of survivingSlots) {
       const owners =
         (d.data().owners as Array<{ userId: string }> | undefined) ?? [];
       for (const o of owners) ownedUids.add(o.userId);
     }
-    const orphans = membersSnap.docs.filter((d) => !ownedUids.has(d.id));
-    let nextPos = slotsSnap.size + 1;
+    const orphanMembers = membersSnap.docs.filter(
+      (d) => activeMemberIds.has(d.id) && !ownedUids.has(d.id),
+    );
+    let nextPos = survivingSlots.length + 1;
     const cycleForSlot =
       typeof g.currentCycle === "number" ? g.currentCycle : 1;
-    for (const m of orphans) {
+    for (const m of orphanMembers) {
       const md = m.data();
-      await setDoc(
-        doc(collection(firestore, "groups", groupId, "slots")),
-        {
-          position: nextPos,
-          owners: [
-            {
-              userId: m.id,
-              name: String(md.name ?? ""),
-              share: 1.0,
-            },
-          ],
-          joinCycle: cycleForSlot,
-        },
-      );
+      await setDoc(doc(collection(firestore, "groups", groupId, "slots")), {
+        position: nextPos,
+        owners: [
+          {
+            userId: m.id,
+            name: String(md.name ?? ""),
+            share: 1.0,
+          },
+        ],
+        joinCycle: cycleForSlot,
+      });
       report.slotsCreated++;
       nextPos++;
     }
+  }
+
+  // 3c. Reconcile group.memberCount + group.memberIds against the
+  // active (non-kicked) member set. Drifts every time a kick, join, or
+  // reset path forgets to update one of the two.
+  const activeIds = Array.from(activeMemberIds).sort();
+  const currentCount = typeof g.memberCount === "number" ? g.memberCount : -1;
+  const currentIds = Array.isArray(g.memberIds)
+    ? [...(g.memberIds as string[])].sort()
+    : [];
+  const idsDiffer =
+    currentIds.length !== activeIds.length ||
+    currentIds.some((v, i) => v !== activeIds[i]);
+  if (currentCount !== activeIds.length || idsDiffer) {
+    await updateDoc(groupRef, {
+      memberCount: activeIds.length,
+      memberIds: activeIds,
+    });
+    report.memberCountFixed = true;
   }
 
   await writeAudit({
@@ -175,6 +226,8 @@ export type HealAllReport = {
   cycleFixed: number;
   adminMemberCreated: number;
   slotsCreated: number;
+  orphanSlotsDeleted: number;
+  memberCountFixed: number;
   failed: number;
 };
 
@@ -188,6 +241,8 @@ export async function healAllGroups(): Promise<HealAllReport> {
     cycleFixed: 0,
     adminMemberCreated: 0,
     slotsCreated: 0,
+    orphanSlotsDeleted: 0,
+    memberCountFixed: 0,
     failed: 0,
   };
   for (const g of groupsSnap.docs) {
@@ -197,6 +252,8 @@ export async function healAllGroups(): Promise<HealAllReport> {
       if (r.cycleFixed) report.cycleFixed++;
       if (r.adminMemberCreated) report.adminMemberCreated++;
       report.slotsCreated += r.slotsCreated;
+      report.orphanSlotsDeleted += r.orphanSlotsDeleted;
+      if (r.memberCountFixed) report.memberCountFixed++;
     } catch {
       report.failed++;
     }

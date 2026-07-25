@@ -2278,6 +2278,7 @@ export async function resetGroup(groupId: string): Promise<{
   membersReset: number;
   slotsVoided: number;
   membersKicked: number;
+  adminSlotSeeded: boolean;
 }> {
   const groupRef = doc(firestore, "groups", groupId);
   const groupSnap = await getDoc(groupRef);
@@ -2335,43 +2336,33 @@ export async function resetGroup(groupId: string): Promise<{
     ),
   ]);
 
-  // 2. Enforce 1 slot = 1 member.
-  //   - Split slots (>=2 owners): void the slot and kick every co-owner.
-  //   - Solo slots where the owner holds more than one: keep the
-  //     lowest-position slot for that owner; void the extras. Owner is
-  //     NOT kicked — they still hold one slot after the reset.
-  //   - Anyone kicked via a split also loses any other slots they own
-  //     (their kept-lowest survivor is voided too, since they're gone).
-  // Surviving slots get payoutCycle/pendingSecondary cleared and are
-  // renumbered contiguously.
+  // 2. Wipe every non-admin slot and kick every non-admin member.
+  //   - Only the admin (group.createdBy) survives the reset — they keep
+  //     one slot at position 1 (or get one seeded if they had none).
+  //   - Every other slot is deleted; every other member is soft-kicked
+  //     so admin can re-enroll a fresh roster after the reset.
+  const adminUid = String(groupSnap.data()?.createdBy ?? "");
+  if (!adminUid) throw new Error("Group has no admin (createdBy).");
+
   const kickedUids = new Set<string>();
-  for (const d of slotsSnap.docs) {
-    const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
-    if (owners.length >= 2) {
-      for (const o of owners) {
-        const uid = String(o?.userId ?? "");
-        if (uid) kickedUids.add(uid);
-      }
-    }
+  for (const m of membersSnap.docs) {
+    if (m.id !== adminUid) kickedUids.add(m.id);
   }
 
-  // For each surviving (non-kicked) uid, pick the lowest-position solo
-  // slot as the keeper; every other slot they own is voided.
-  const soloByOwner = new Map<string, typeof slotsSnap.docs>();
-  for (const d of slotsSnap.docs) {
+  // Pick which admin-owned solo slot survives (lowest position). Split
+  // slots — even if the admin co-owns one — are voided so we always
+  // land back at 1 slot = 1 owner = the admin.
+  const adminSoloSlots = slotsSnap.docs.filter((d) => {
     const owners = (d.data().owners as Array<{ userId?: string }> | undefined) ?? [];
-    if (owners.length !== 1) continue;
-    const uid = String(owners[0]?.userId ?? "");
-    if (!uid || kickedUids.has(uid)) continue;
-    const list = soloByOwner.get(uid) ?? [];
-    list.push(d);
-    soloByOwner.set(uid, list);
-  }
+    return (
+      owners.length === 1 && String(owners[0]?.userId ?? "") === adminUid
+    );
+  });
+  adminSoloSlots.sort(
+    (a, b) => Number(a.data().position ?? 0) - Number(b.data().position ?? 0),
+  );
   const keeperDocIds = new Set<string>();
-  for (const [, list] of soloByOwner) {
-    list.sort((a, b) => Number(a.data().position ?? 0) - Number(b.data().position ?? 0));
-    keeperDocIds.add(list[0].id);
-  }
+  if (adminSoloSlots.length > 0) keeperDocIds.add(adminSoloSlots[0].id);
 
   const voidSlotDocs: typeof slotsSnap.docs = [];
   const surviveSlotDocs: typeof slotsSnap.docs = [];
@@ -2414,6 +2405,29 @@ export async function resetGroup(groupId: string): Promise<{
     ),
   );
 
+  // Edge case: admin had no solo slot (only appeared in a split, or
+  // had none at all) — seed a fresh position-1 slot so the group isn't
+  // left slotless. Only for useSlots groups; legacy layouts rely on
+  // member.position.
+  const adminMemberDoc = membersSnap.docs.find((m) => m.id === adminUid);
+  const isUseSlotsGroup = groupSnap.data()?.useSlots === true;
+  let adminSlotSeeded = false;
+  if (isUseSlotsGroup && orderedSurvivors.length === 0) {
+    const adminName = String(adminMemberDoc?.data().name ?? "Admin");
+    const seededSlotRef = doc(slotsCol);
+    await commit([
+      (b) => {
+        b.set(seededSlotRef, {
+          position: 1,
+          owners: [{ userId: adminUid, name: adminName, share: 1.0 }],
+          joinCycle: 1,
+        });
+      },
+    ]);
+    uidToNewPosition.set(adminUid, 1);
+    adminSlotSeeded = true;
+  }
+
   // 3. Reset each member's payoutCycle so legacy consumers agree.
   // Owners of voided slots are soft-kicked in the same pass — admin
   // can re-enroll them fresh after the reset. For surviving members we
@@ -2422,8 +2436,7 @@ export async function resetGroup(groupId: string): Promise<{
   // 1..N with no gaps (mirrors initial-rotation state — admin can then
   // reorder freely while positionsLocked is false). Non-useSlots
   // groups: renumber survivors in their existing position order.
-  const isUseSlots = groupSnap.data()?.useSlots === true;
-  const nonSlotSurvivors = isUseSlots
+  const nonSlotSurvivors = isUseSlotsGroup
     ? []
     : membersSnap.docs
         .filter((m) => !kickedUids.has(m.id))
@@ -2436,7 +2449,7 @@ export async function resetGroup(groupId: string): Promise<{
       if (kickedUids.has(d.id)) {
         update.kicked = true;
         update.kickedAt = serverTimestamp();
-      } else if (isUseSlots) {
+      } else if (isUseSlotsGroup) {
         const p = uidToNewPosition.get(d.id);
         if (p != null) update.position = p;
       } else {
@@ -2517,6 +2530,8 @@ export async function resetGroup(groupId: string): Promise<{
     positionsLocked: false,
     status: "active",
     startDate: newStart,
+    memberCount: 1,
+    memberIds: [adminUid],
   };
   if (groupData?.type === "secured") {
     groupUpdate.currentPhase = "notStarted";
@@ -2528,10 +2543,11 @@ export async function resetGroup(groupId: string): Promise<{
     ledgerDeleted: ledgerSnap.size,
     requestsDeleted: requestsSnap.size,
     changeRequestsDeleted: changeRequestsSnap.size,
-    slotsReset: orderedSurvivors.length,
+    slotsReset: orderedSurvivors.length + (adminSlotSeeded ? 1 : 0),
     membersReset: membersSnap.size,
     slotsVoided: voidSlotDocs.length,
     membersKicked: kickedUids.size,
+    adminSlotSeeded,
   };
 
   await writeAudit({
