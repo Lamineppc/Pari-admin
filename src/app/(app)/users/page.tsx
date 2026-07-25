@@ -720,6 +720,7 @@ function CreateUserDialog({
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [country, setCountry] = useState("");
+  const [city, setCity] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -746,6 +747,7 @@ function CreateUserDialog({
         phone: phone.trim() || undefined,
         whatsapp: whatsapp.trim() || undefined,
         country: country.trim() || undefined,
+        city: city.trim() || undefined,
       });
       toast.success(
         password.trim()
@@ -826,6 +828,14 @@ function CreateUserDialog({
               value={country}
               onChange={(e) => setCountry(e.target.value)}
               placeholder="Mali"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-24 text-xs text-muted-foreground">City</label>
+            <Input
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="Bamako"
             />
           </div>
           <div className="flex items-center gap-2">

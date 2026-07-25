@@ -337,6 +337,7 @@ const createUserFn = httpsCallable<
     phone?: string;
     whatsapp?: string;
     country?: string;
+    city?: string;
   },
   { uid: string }
 >(firebaseFunctions, "createUserAsSuperAdmin");
@@ -770,6 +771,7 @@ export async function createUserAsSuperAdmin(args: {
   phone?: string;
   whatsapp?: string;
   country?: string;
+  city?: string;
 }): Promise<string> {
   const res = await createUserFn(args);
   const uid = res.data.uid;
