@@ -12,6 +12,8 @@ import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { subscribeStores, type Store as StoreDoc } from "@/lib/stores";
 import { subscribeAuditLog, type AuditEntry } from "@/lib/audit";
 import { healAllGroups } from "@/lib/heal";
+import { purgeOrphanSimUsers } from "@/lib/mock-groups";
+import { Trash2 } from "lucide-react";
 
 export default function DashboardPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -78,7 +80,10 @@ export default function DashboardPage() {
             Platform overview. Live totals from Firestore.
           </p>
         </div>
-        <HealAllButton />
+        <div className="flex flex-wrap items-center gap-2">
+          <PurgeOrphanSimButton />
+          <HealAllButton />
+        </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -310,6 +315,44 @@ function StatCard({
     </Card>
   );
   return href ? <Link href={href}>{inner}</Link> : inner;
+}
+
+function PurgeOrphanSimButton() {
+  const [running, setRunning] = useState(false);
+  async function run() {
+    if (
+      !window.confirm(
+        "Delete every synthetic sim_* user doc (and its mock wallet) that is not currently a member of any group? Real users are never touched.",
+      )
+    ) {
+      return;
+    }
+    setRunning(true);
+    try {
+      const n = await purgeOrphanSimUsers();
+      toast.success(
+        n === 0
+          ? "No orphan sim users found."
+          : `Purged ${n} orphan sim user${n === 1 ? "" : "s"}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Purge failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={running}
+      onClick={run}
+      className="h-9"
+    >
+      <Trash2 className="h-4 w-4" />
+      {running ? "Purging…" : "Purge orphan sim users"}
+    </Button>
+  );
 }
 
 function HealAllButton() {

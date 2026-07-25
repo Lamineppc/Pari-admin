@@ -237,6 +237,40 @@ export async function refillMemberWallets(
   return targets.length;
 }
 
+/** Deletes every synthetic `sim_*` user doc that is not currently a member
+ *  of any group. Also removes the matching mockWallet. Real (non-sim) users
+ *  are never touched. Returns the number of user docs deleted. */
+export async function purgeOrphanSimUsers(): Promise<number> {
+  const [usersSnap, groupsSnap] = await Promise.all([
+    getDocs(collection(firestore, "users")),
+    getDocs(collection(firestore, "groups")),
+  ]);
+  const stillReferenced = new Set<string>();
+  for (const g of groupsSnap.docs) {
+    const ids = (g.data().memberIds as string[] | undefined) ?? [];
+    for (const id of ids) stillReferenced.add(id);
+  }
+  const orphans = usersSnap.docs.filter(
+    (d) => d.id.startsWith("sim_") && !stillReferenced.has(d.id),
+  );
+  await Promise.all(
+    orphans.flatMap((d) => [
+      deleteDoc(d.ref).catch(() => {}),
+      deleteDoc(doc(firestore, "mockWallets", userWalletId(d.id))).catch(
+        () => {},
+      ),
+    ]),
+  );
+  await writeAudit({
+    action: "purge_orphan_sim_users",
+    targetType: "platform",
+    targetId: "all",
+    test: true,
+    after: { deletedCount: orphans.length },
+  });
+  return orphans.length;
+}
+
 /** Trashes every mock group on the platform in one go. Returns the number
  *  deleted. Used to hit a clean slate when a series of tests has left the
  *  Firestore data messy. Non-mock groups are never touched. */
