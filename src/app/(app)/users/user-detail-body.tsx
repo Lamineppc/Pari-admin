@@ -41,6 +41,8 @@ import {
   setContactValue,
   setContactVerified,
   setUserEscalation,
+  dismissUserEscalation,
+  subscribeUserEscalationArchive,
   setUserBan,
   setUserIsTestAccount,
   subscribeSupportMessages,
@@ -58,6 +60,7 @@ import {
   type UserEscalationFlag,
   type UserGroupMembership,
   type UserPaymentEntry,
+  type ArchivedEscalation,
 } from "@/lib/users";
 import Link from "next/link";
 
@@ -98,6 +101,18 @@ export function UserDetailBody({
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
   const [contact, setContact] = useState<UserContact | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [escalationArchive, setEscalationArchive] = useState<
+    ArchivedEscalation[] | null
+  >(null);
+
+  useEffect(() => {
+    const unsub = subscribeUserEscalationArchive(
+      user.uid,
+      setEscalationArchive,
+      () => setEscalationArchive([]),
+    );
+    return unsub;
+  }, [user.uid]);
 
   useEffect(() => {
     const unsub = subscribeAuditLog(
@@ -352,7 +367,27 @@ export function UserDetailBody({
         </div>
         <p className="text-sm text-muted-foreground">{user.email}</p>
         {user.escalationFlag && (
-          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <div className="relative mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 pr-10 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <button
+              type="button"
+              title="Dismiss and archive this complaint"
+              onClick={async () => {
+                const note = window.prompt(
+                  "Optional note about why this is being dismissed (leave blank if none):",
+                  "",
+                );
+                if (note === null) return;
+                try {
+                  await dismissUserEscalation(user.uid, note);
+                  toast.success("Complaint dismissed and archived.");
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "Dismiss failed.");
+                }
+              }}
+              className="absolute top-2 right-2 rounded-md p-1 hover:bg-amber-100 dark:hover:bg-amber-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
             <div className="mb-1 font-medium">
               Escalation: {user.escalationFlag.replace(/_/g, " ")}
               {user.escalationFlaggedAt && (
@@ -579,6 +614,9 @@ export function UserDetailBody({
         <>
           <Separator />
           <UserEscalationPanel user={user} />
+
+          <Separator />
+          <EscalationArchivePanel entries={escalationArchive} />
 
           <Separator />
           <UserNotesPanel uid={user.uid} />
@@ -932,6 +970,68 @@ function UserNotesPanel({ uid }: { uid: string }) {
           </Button>
         )}
       </div>
+    </section>
+  );
+}
+
+function EscalationArchivePanel({
+  entries,
+}: {
+  entries: ArchivedEscalation[] | null;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Complaint archive
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Dismissed escalations for this user. Each entry preserves the original
+        flag, reason, and who dismissed it.
+      </p>
+      {entries === null ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Nothing archived yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {entries.map((e) => (
+            <li
+              key={e.id}
+              className="rounded-md border p-3 text-sm"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                >
+                  ⚠ {e.flag.replace(/_/g, " ")}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  Dismissed {e.dismissedAt?.toLocaleString() ?? "—"}
+                  {e.dismissedByEmail && ` · by ${e.dismissedByEmail}`}
+                </span>
+              </div>
+              {e.reason?.trim() && (
+                <div className="mt-2 whitespace-pre-wrap text-sm">
+                  <span className="text-xs text-muted-foreground">Reason: </span>
+                  {e.reason}
+                </div>
+              )}
+              {e.dismissNote?.trim() && (
+                <div className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
+                  <span className="text-xs">Dismiss note: </span>
+                  {e.dismissNote}
+                </div>
+              )}
+              {e.flaggedAt && (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Originally flagged {e.flaggedAt.toLocaleString()}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

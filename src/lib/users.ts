@@ -568,6 +568,92 @@ export async function setUserEscalation(
   });
 }
 
+export type ArchivedEscalation = {
+  id: string;
+  flag: UserEscalationFlag;
+  reason: string | null;
+  flaggedAt: Date | null;
+  dismissedAt: Date | null;
+  dismissedBy: string;
+  dismissedByEmail: string;
+  dismissNote: string | null;
+};
+
+/// Archives the current escalation on [uid] into
+/// users/{uid}/admin_notes/escalation_<ts> (super-admin R/W only) and
+/// clears the live escalation fields. Uses the existing admin_notes
+/// rule so no backend rule change is needed.
+export async function dismissUserEscalation(
+  uid: string,
+  dismissNote: string = "",
+): Promise<void> {
+  const ref = doc(firestore, "users", uid);
+  const before = await getDoc(ref);
+  const bd = before.data() ?? {};
+  const flag = (bd.escalationFlag as UserEscalationFlag | undefined) ?? null;
+  if (!flag) return;
+  const me = firebaseAuth.currentUser;
+  const archiveId = `escalation_${Date.now()}`;
+  await setDoc(doc(firestore, "users", uid, "admin_notes", archiveId), {
+    kind: "escalation_archive",
+    flag,
+    reason: (bd.escalationReason as string | undefined) ?? null,
+    flaggedAt: (bd.escalationFlaggedAt as Timestamp | undefined) ?? null,
+    dismissedAt: serverTimestamp(),
+    dismissedBy: me?.uid ?? "",
+    dismissedByEmail: me?.email ?? "",
+    dismissNote: dismissNote.trim() || null,
+  });
+  await updateDoc(ref, {
+    escalationFlag: null,
+    escalationReason: null,
+    escalationFlaggedAt: null,
+  });
+  await writeAudit({
+    action: "clear_user_escalation",
+    targetType: "user",
+    targetId: uid,
+    test: false,
+    reason: dismissNote || null,
+    before: { escalationFlag: flag, escalationReason: bd.escalationReason ?? null },
+    after: { escalationFlag: null, archived: archiveId },
+  });
+}
+
+/// Live stream of archived (dismissed) escalations for [uid]. Reads
+/// users/{uid}/admin_notes and filters to docs with kind === "escalation_archive".
+export function subscribeUserEscalationArchive(
+  uid: string,
+  cb: (entries: ArchivedEscalation[]) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    collection(firestore, "users", uid, "admin_notes"),
+    (snap) => {
+      const rows: ArchivedEscalation[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        if (data.kind !== "escalation_archive") continue;
+        rows.push({
+          id: d.id,
+          flag: (data.flag as UserEscalationFlag | undefined) ?? "other",
+          reason: (data.reason as string | undefined) ?? null,
+          flaggedAt: (data.flaggedAt as Timestamp | undefined)?.toDate() ?? null,
+          dismissedAt: (data.dismissedAt as Timestamp | undefined)?.toDate() ?? null,
+          dismissedBy: (data.dismissedBy as string | undefined) ?? "",
+          dismissedByEmail: (data.dismissedByEmail as string | undefined) ?? "",
+          dismissNote: (data.dismissNote as string | undefined) ?? null,
+        });
+      }
+      rows.sort(
+        (a, b) => (b.dismissedAt?.getTime() ?? 0) - (a.dismissedAt?.getTime() ?? 0),
+      );
+      cb(rows);
+    },
+    (err) => onError?.(err),
+  );
+}
+
 /// Live stream of the super-admin scratchpad on [uid]. Backed by
 /// users/{uid}/admin_notes/notes — super-admin R/W only, so the
 /// target user never sees what support wrote about them.
