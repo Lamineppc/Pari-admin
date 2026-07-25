@@ -19,6 +19,7 @@ import { writeAudit } from "./audit";
 /// period turns the cycle counter into a lie.
 function cyclePeriodDays(frequency: string): number {
   const f = frequency.toLowerCase();
+  if (f === "daily") return 1;
   if (f === "weekly") return 7;
   if (f === "biweekly" || f === "bi-weekly") return 14;
   return 30;

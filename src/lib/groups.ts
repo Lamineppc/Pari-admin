@@ -1447,9 +1447,9 @@ export async function updateGroupSettings(
     write.amount = patch.amount;
   }
   if (patch.frequency !== undefined) {
-    const allowed = new Set(["Weekly", "Bi-weekly", "Monthly"]);
+    const allowed = new Set(["Daily", "Weekly", "Bi-weekly", "Monthly"]);
     if (!allowed.has(patch.frequency)) {
-      throw new Error("Frequency must be Weekly, Bi-weekly, or Monthly.");
+      throw new Error("Frequency must be Daily, Weekly, Bi-weekly, or Monthly.");
     }
     write.frequency = patch.frequency;
   }
@@ -2376,11 +2376,13 @@ export async function resetGroup(groupId: string): Promise<{
   const groupData = groupSnap.data();
   const frequency = String(groupData?.frequency ?? "monthly").toLowerCase();
   const periodDays =
-    frequency === "weekly"
-      ? 7
-      : frequency === "biweekly"
-        ? 14
-        : 30;
+    frequency === "daily"
+      ? 1
+      : frequency === "weekly"
+        ? 7
+        : frequency === "biweekly" || frequency === "bi-weekly"
+          ? 14
+          : 30;
   const now = new Date();
   const newStart = new Date(now);
   newStart.setDate(newStart.getDate() + periodDays);

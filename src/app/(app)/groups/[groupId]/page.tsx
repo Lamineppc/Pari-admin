@@ -1304,6 +1304,7 @@ function GroupSettingsDialog({
               onChange={(e) => setFrequency(e.target.value)}
               className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
             >
+              <option value="Daily">Daily</option>
               <option value="Weekly">Weekly</option>
               <option value="Bi-weekly">Bi-weekly</option>
               <option value="Monthly">Monthly</option>
