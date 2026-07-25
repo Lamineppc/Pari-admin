@@ -68,6 +68,7 @@ import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createGroupForUser } from "@/lib/groups";
+import { setUserCourierRole } from "@/lib/orders";
 import { CountrySelect } from "@/components/country-select";
 import { findCountry } from "@/lib/countries";
 
@@ -93,6 +94,7 @@ export function UserDetailBody({
     | "restore"
     | "topup"
     | "toggle-test"
+    | "toggle-courier"
     | "exit-sim"
     | "force-signout"
     | "hard-delete"
@@ -287,6 +289,23 @@ export function UserDetailBody({
     try {
       await sendPasswordReset(user.uid, user.email);
       toast.success(`Reset email sent to ${user.email}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyToggleCourier() {
+    const nextValue = !user.roles.includes("courier");
+    setBusy("toggle-courier");
+    try {
+      await setUserCourierRole(user.uid, nextValue);
+      toast.success(
+        nextValue
+          ? "Courier role granted."
+          : "Courier role revoked.",
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -614,6 +633,27 @@ export function UserDetailBody({
                 </p>
               </>
             )}
+            <Separator className="my-2" />
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Roles
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={user.roles.includes("courier") ? "default" : "outline"}
+                disabled={busy !== null}
+                onClick={applyToggleCourier}
+                className="w-fit"
+              >
+                {user.roles.includes("courier")
+                  ? "Revoke courier role"
+                  : "Grant courier role"}{" "}
+                <ChevronRight />
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Couriers appear in the &quot;Assign courier&quot; picker on order
+                detail pages.
+              </p>
+            </div>
           </section>
         </>
       )}

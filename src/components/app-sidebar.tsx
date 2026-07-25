@@ -8,6 +8,7 @@ import {
   FileText,
   Inbox,
   LayoutDashboard,
+  Package,
   Users,
   UsersRound,
   Store,
@@ -33,6 +34,7 @@ const platformNav = [
   { title: "Groups", href: "/groups", icon: UsersRound },
   { title: "Users", href: "/users", icon: Users },
   { title: "Store applications", href: "/store-applications", icon: Store },
+  { title: "Orders", href: "/orders", icon: Package },
 ];
 
 const opsNav = [

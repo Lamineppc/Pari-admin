@@ -98,7 +98,14 @@ export type AuditAction =
   | "force_accept_split"
   | "cancel_pending_split"
   | "purge_orphan_sim_users"
-  | "create_group_for_user";
+  | "create_group_for_user"
+  | "quote_order"
+  | "assign_courier_and_issue_pin"
+  | "cancel_order"
+  | "refund_order"
+  | "grant_courier_role"
+  | "revoke_courier_role"
+  | "set_platform_config";
 
 export type AuditTargetType =
   | "group"
@@ -106,7 +113,8 @@ export type AuditTargetType =
   | "store"
   | "wallet"
   | "cycle"
-  | "platform";
+  | "platform"
+  | "order";
 
 export type AuditPhase = "prelaunch" | "live";
 

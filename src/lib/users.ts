@@ -49,6 +49,7 @@ export type PlatformUser = {
   escalationFlag: UserEscalationFlag | null;
   escalationReason: string | null;
   escalationFlaggedAt: Date | null;
+  roles: string[];
 };
 
 function toUser(snap: QueryDocumentSnapshot): PlatformUser {
@@ -71,6 +72,7 @@ function toUser(snap: QueryDocumentSnapshot): PlatformUser {
     escalationReason: (d.escalationReason as string | undefined) ?? null,
     escalationFlaggedAt:
       (d.escalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
+    roles: Array.isArray(d.roles) ? (d.roles as string[]) : [],
   };
 }
 
@@ -229,6 +231,7 @@ export function subscribeUser(
         escalationReason: (d.escalationReason as string | undefined) ?? null,
         escalationFlaggedAt:
           (d.escalationFlaggedAt as Timestamp | undefined)?.toDate() ?? null,
+        roles: Array.isArray(d.roles) ? (d.roles as string[]) : [],
       });
     },
     (err) => onError?.(err),
