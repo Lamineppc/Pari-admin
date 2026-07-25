@@ -111,6 +111,24 @@ function toTicket(snap: QueryDocumentSnapshot): SupportTicket {
   };
 }
 
+export function subscribeTicket(
+  ticketId: string,
+  cb: (t: SupportTicket | null) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, COLLECTION, ticketId),
+    (snap) => {
+      if (!snap.exists()) {
+        cb(null);
+        return;
+      }
+      cb(toTicket(snap as QueryDocumentSnapshot));
+    },
+    (err) => onError?.(err),
+  );
+}
+
 export function subscribeTickets(
   cb: (tickets: SupportTicket[]) => void,
   onError?: (e: Error) => void,

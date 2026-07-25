@@ -22,7 +22,7 @@ import {
   type TicketStatus,
 } from "@/lib/support";
 import { NewTicketDialog } from "./new-ticket-dialog";
-import { TicketDetailSheet } from "./ticket-detail-sheet";
+import { useRouter } from "next/navigation";
 
 const STATUS_FILTERS: Array<{ key: TicketStatus | "all"; label: string }> = [
   { key: "open", label: "Open" },
@@ -48,10 +48,10 @@ const STATUS_STYLES: Record<TicketStatus, string> = {
 
 export default function SupportPage() {
   const PAGE_SIZE = 15;
+  const router = useRouter();
   const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<TicketStatus | "all">("all");
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
 
   useEffect(() => {
@@ -94,11 +94,6 @@ export default function SupportPage() {
     }
     return c;
   }, [tickets]);
-
-  const selected = useMemo(
-    () => tickets?.find((t) => t.id === selectedId) ?? null,
-    [tickets, selectedId],
-  );
 
   const totalPages = filtered ? Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)) : 1;
   useEffect(() => {
@@ -192,7 +187,7 @@ export default function SupportPage() {
               <TableRow
                 key={t.id}
                 className="cursor-pointer"
-                onClick={() => setSelectedId(t.id)}
+                onClick={() => router.push(`/support/${t.id}`)}
               >
                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                   {t.updatedAt?.toLocaleString(undefined, {
@@ -265,12 +260,6 @@ export default function SupportPage() {
         </div>
       )}
 
-      <TicketDetailSheet
-        ticket={selected}
-        onOpenChange={(open) => {
-          if (!open) setSelectedId(null);
-        }}
-      />
     </div>
   );
 }
