@@ -27,7 +27,6 @@ import { EscalationBadge } from "@/components/escalation-badge";
 import {
   addMeAsObserver,
   cancelAndRefundGroup,
-  clearAdminEscalation,
   isMockMoneyGroup,
   demoteDefaultedAdmin,
   kickDefaultedAdmin,
@@ -87,6 +86,12 @@ import {
   type SimulatorRunResult,
 } from "@/lib/simulator";
 import { refillMemberWallets, trashMockGroup } from "@/lib/mock-groups";
+import {
+  dismissGroupEscalationArchive,
+  subscribeArchiveForTarget,
+  type EscalationArchiveEntry,
+} from "@/lib/escalation-archive";
+import { ArchiveList } from "@/components/escalation-archive-list";
 import { broadcastToGroupMembers } from "@/lib/notifications";
 import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -141,6 +146,20 @@ export default function GroupDetailPage() {
   const [pot, setPot] = useState<Wallet | null>(null);
   const [simPreview, setSimPreview] = useState<SimulatorPreview | null>(null);
   const [skipSet, setSkipSet] = useState<Set<string>>(new Set());
+  const [escalationArchive, setEscalationArchive] = useState<
+    EscalationArchiveEntry[] | null
+  >(null);
+
+  useEffect(() => {
+    if (!groupId) return;
+    const unsub = subscribeArchiveForTarget(
+      "group",
+      groupId,
+      setEscalationArchive,
+      () => setEscalationArchive([]),
+    );
+    return unsub;
+  }, [groupId]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -535,6 +554,10 @@ export default function GroupDetailPage() {
         </div>
       )}
 
+      {escalationArchive && escalationArchive.length > 0 && (
+        <ArchiveList title="Complaint archive" entries={escalationArchive} />
+      )}
+
       <Separator />
 
       <div className="flex flex-col gap-2">
@@ -612,7 +635,18 @@ export default function GroupDetailPage() {
               variant="outline"
               disabled={busy !== null}
               onClick={() =>
-                run("clear", () => clearAdminEscalation(group.id), "Escalation flag cleared.")
+                run(
+                  "clear",
+                  async () => {
+                    const note = window.prompt(
+                      "Optional note about why this is being dismissed (leave blank if none):",
+                      "",
+                    );
+                    if (note === null) throw new Error("cancelled");
+                    await dismissGroupEscalationArchive(group.id, note);
+                  },
+                  "Escalation dismissed and archived.",
+                )
               }
             >
               <X /> Dismiss escalation (false positive)

@@ -426,28 +426,6 @@ export async function transferOwnershipToManager(groupId: string): Promise<void>
   });
 }
 
-// Clear an escalation flag without transferring ownership. Useful when the
-// super admin has verified a false-positive and wants to dismiss the flag.
-export async function clearAdminEscalation(groupId: string): Promise<void> {
-  const groupSnap = await getDoc(doc(firestore, "groups", groupId));
-  const flagBefore = groupSnap.exists()
-    ? (groupSnap.data() as { adminEscalationFlag?: string; moneyProvider?: string })
-    : {};
-  await updateDoc(doc(firestore, "groups", groupId), {
-    adminEscalationFlag: deleteField(),
-    adminEscalationFlaggedAt: deleteField(),
-    adminEscalationReason: deleteField(),
-  });
-  await writeAudit({
-    action: "dismiss_escalation",
-    targetType: "group",
-    targetId: groupId,
-    test: flagBefore.moneyProvider === "mock",
-    before: { adminEscalationFlag: flagBefore.adminEscalationFlag ?? null },
-    after: { adminEscalationFlag: null },
-  });
-}
-
 // Manually raise the escalation flag from the admin panel. Same shape as
 // FirestoreService.flagAdminEscalationIfNeeded writes on the mobile side.
 export async function flagAdminEscalation(

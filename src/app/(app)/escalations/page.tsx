@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ShieldPlus, User as UserIcon, Store as StoreIcon } from "lucide-react";
+import { AlertTriangle, ShieldPlus, User as UserIcon, Store as StoreIcon, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -23,6 +23,13 @@ import {
 import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { subscribeStores, type Store } from "@/lib/stores";
 import { StoreDetailSheet } from "../store-applications/store-detail-sheet";
+import {
+  dismissGroupEscalationArchive,
+  dismissStoreEscalationArchive,
+  dismissUserEscalationArchive,
+} from "@/lib/escalation-archive";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 type Tab = "all" | "groups" | "users" | "stores";
 type SortKey = "age" | "money" | "size";
@@ -39,6 +46,38 @@ function fmtAge(d: Date | null): string {
 
 function moneyAtRisk(g: Group): number {
   return g.amount * g.memberCount * Math.max(g.currentCycle ?? 0, 1);
+}
+
+async function promptDismiss(
+  label: string,
+  fn: (note: string) => Promise<void>,
+) {
+  const note = window.prompt(
+    `Dismiss ${label}? Add an optional note (blank if none):`,
+    "",
+  );
+  if (note === null) return;
+  try {
+    await fn(note);
+    toast.success("Dismissed and archived.");
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Dismiss failed.");
+  }
+}
+
+function DismissCell({ onClick }: { onClick: () => void }) {
+  return (
+    <TableCell onClick={(e) => e.stopPropagation()} className="w-8">
+      <button
+        type="button"
+        title="Dismiss and archive"
+        onClick={onClick}
+        className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </TableCell>
+  );
 }
 
 function KindBadge({ kind }: { kind: string }) {
@@ -133,13 +172,18 @@ export default function EscalationsPage() {
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
             <AlertTriangle className="h-4 w-4" />
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-semibold tracking-tight">Escalations</h1>
             <p className="text-sm text-muted-foreground">
               Everything needing super-admin attention — flagged groups,
               users, and stores. Click any row for the intervention actions.
             </p>
           </div>
+          <Link href="/escalations/archive">
+            <Button variant="outline" size="sm">
+              View archive
+            </Button>
+          </Link>
         </div>
         <div className="flex flex-wrap gap-3 pt-2">
           <StatCard label="Group flags" value={activeGroupFlags} tone="red" />
@@ -195,13 +239,13 @@ export default function EscalationsPage() {
             <TableBody>
               {escalatedGroups === null || escalatedUsers === null || escalatedStores === null ? (
                 <TableRow>
-                  <TableCell colSpan={5}>
+                  <TableCell colSpan={6}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               ) : escalatedGroups.length + escalatedUsers.length + escalatedStores.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
                     Nothing to escalate.
                   </TableCell>
                 </TableRow>
@@ -230,6 +274,13 @@ export default function EscalationsPage() {
                       <TableCell className="text-sm text-muted-foreground">
                         {fmtAge(g.adminEscalationFlaggedAt)}
                       </TableCell>
+                      <DismissCell
+                        onClick={() =>
+                          promptDismiss(`escalation on "${g.name}"`, (note) =>
+                            dismissGroupEscalationArchive(g.id, note),
+                          )
+                        }
+                      />
                     </TableRow>
                   ))}
                   {escalatedUsers.map((u) => (
@@ -254,6 +305,13 @@ export default function EscalationsPage() {
                       <TableCell className="text-sm text-muted-foreground">
                         {fmtAge(u.escalationFlaggedAt)}
                       </TableCell>
+                      <DismissCell
+                        onClick={() =>
+                          promptDismiss(`complaint on ${u.name || u.email}`, (note) =>
+                            dismissUserEscalationArchive(u.uid, note),
+                          )
+                        }
+                      />
                     </TableRow>
                   ))}
                   {escalatedStores.map((s) => (
@@ -280,6 +338,13 @@ export default function EscalationsPage() {
                       <TableCell className="text-sm text-muted-foreground">
                         {fmtAge(s.escalationFlaggedAt)}
                       </TableCell>
+                      <DismissCell
+                        onClick={() =>
+                          promptDismiss(`complaint on "${s.storeName}"`, (note) =>
+                            dismissStoreEscalationArchive(s.id, note),
+                          )
+                        }
+                      />
                     </TableRow>
                   ))}
                 </>
@@ -307,19 +372,20 @@ export default function EscalationsPage() {
                   <TableHead className="text-right">Members</TableHead>
                   <TableHead className="text-right">Est. money</TableHead>
                   <TableHead>Age</TableHead>
+                  <TableHead className="w-8" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {escalatedGroups === null && (
                   <TableRow>
-                    <TableCell colSpan={6}>
+                    <TableCell colSpan={7}>
                       <Skeleton className="h-6 w-full" />
                     </TableCell>
                   </TableRow>
                 )}
                 {escalatedGroups !== null && escalatedGroups.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
                       No flagged groups and no caretakers.
                     </TableCell>
                   </TableRow>
@@ -384,14 +450,14 @@ export default function EscalationsPage() {
             <TableBody>
               {escalatedUsers === null && (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={5}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               )}
               {escalatedUsers !== null && escalatedUsers.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
                     No flagged users.
                   </TableCell>
                 </TableRow>
@@ -438,14 +504,14 @@ export default function EscalationsPage() {
             <TableBody>
               {escalatedStores === null && (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={5}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               )}
               {escalatedStores !== null && escalatedStores.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
                     No flagged stores.
                   </TableCell>
                 </TableRow>

@@ -41,8 +41,6 @@ import {
   setContactValue,
   setContactVerified,
   setUserEscalation,
-  dismissUserEscalation,
-  subscribeUserEscalationArchive,
   setUserBan,
   setUserIsTestAccount,
   subscribeSupportMessages,
@@ -60,8 +58,13 @@ import {
   type UserEscalationFlag,
   type UserGroupMembership,
   type UserPaymentEntry,
-  type ArchivedEscalation,
 } from "@/lib/users";
+import {
+  dismissUserEscalationArchive,
+  subscribeArchiveForTarget,
+  type EscalationArchiveEntry,
+} from "@/lib/escalation-archive";
+import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
 
 /// Full-page super-admin controls for a single user. Rendered by
@@ -102,11 +105,12 @@ export function UserDetailBody({
   const [contact, setContact] = useState<UserContact | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [escalationArchive, setEscalationArchive] = useState<
-    ArchivedEscalation[] | null
+    EscalationArchiveEntry[] | null
   >(null);
 
   useEffect(() => {
-    const unsub = subscribeUserEscalationArchive(
+    const unsub = subscribeArchiveForTarget(
+      "user",
       user.uid,
       setEscalationArchive,
       () => setEscalationArchive([]),
@@ -378,7 +382,7 @@ export function UserDetailBody({
                 );
                 if (note === null) return;
                 try {
-                  await dismissUserEscalation(user.uid, note);
+                  await dismissUserEscalationArchive(user.uid, note);
                   toast.success("Complaint dismissed and archived.");
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : "Dismiss failed.");
@@ -977,63 +981,9 @@ function UserNotesPanel({ uid }: { uid: string }) {
 function EscalationArchivePanel({
   entries,
 }: {
-  entries: ArchivedEscalation[] | null;
+  entries: EscalationArchiveEntry[] | null;
 }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Complaint archive
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Dismissed escalations for this user. Each entry preserves the original
-        flag, reason, and who dismissed it.
-      </p>
-      {entries === null ? (
-        <p className="text-xs text-muted-foreground">Loading…</p>
-      ) : entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Nothing archived yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {entries.map((e) => (
-            <li
-              key={e.id}
-              className="rounded-md border p-3 text-sm"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
-                >
-                  ⚠ {e.flag.replace(/_/g, " ")}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  Dismissed {e.dismissedAt?.toLocaleString() ?? "—"}
-                  {e.dismissedByEmail && ` · by ${e.dismissedByEmail}`}
-                </span>
-              </div>
-              {e.reason?.trim() && (
-                <div className="mt-2 whitespace-pre-wrap text-sm">
-                  <span className="text-xs text-muted-foreground">Reason: </span>
-                  {e.reason}
-                </div>
-              )}
-              {e.dismissNote?.trim() && (
-                <div className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                  <span className="text-xs">Dismiss note: </span>
-                  {e.dismissNote}
-                </div>
-              )}
-              {e.flaggedAt && (
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  Originally flagged {e.flaggedAt.toLocaleString()}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
+  return <ArchiveList title="Complaint archive" entries={entries} />;
 }
 
 function UserEscalationPanel({ user }: { user: PlatformUser }) {

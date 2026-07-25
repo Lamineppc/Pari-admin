@@ -30,6 +30,12 @@ import {
   type StoreEscalationFlag,
   type StoreListing,
 } from "@/lib/stores";
+import {
+  dismissStoreEscalationArchive,
+  subscribeArchiveForTarget,
+  type EscalationArchiveEntry,
+} from "@/lib/escalation-archive";
+import { ArchiveList } from "@/components/escalation-archive-list";
 
 type Action = "approve" | "reject" | "suspend" | "reinstate" | "revoke";
 
@@ -232,6 +238,10 @@ export function StoreDetailSheet({
 
           <Separator />
 
+          <StoreArchivePanel storeId={store.id} />
+
+          <Separator />
+
           <div className="flex flex-col gap-2">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Decision
@@ -383,14 +393,19 @@ function StoreEscalationPanel({ store }: { store: Store }) {
   }
 
   async function clearFlag() {
+    const note = window.prompt(
+      "Optional note about why this is being dismissed (leave blank if none):",
+      "",
+    );
+    if (note === null) return;
     setBusy(true);
     try {
-      await setStoreEscalation(store, null);
+      await dismissStoreEscalationArchive(store.id, note);
       setFlag("");
       setReason("");
-      toast.success("Escalation cleared.");
+      toast.success("Escalation dismissed and archived.");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Clear failed.");
+      toast.error(e instanceof Error ? e.message : "Dismiss failed.");
     } finally {
       setBusy(false);
     }
@@ -465,6 +480,20 @@ function StoreEscalationPanel({ store }: { store: Store }) {
       </div>
     </section>
   );
+}
+
+function StoreArchivePanel({ storeId }: { storeId: string }) {
+  const [entries, setEntries] = useState<EscalationArchiveEntry[] | null>(null);
+  useEffect(() => {
+    const unsub = subscribeArchiveForTarget(
+      "store",
+      storeId,
+      setEntries,
+      () => setEntries([]),
+    );
+    return unsub;
+  }, [storeId]);
+  return <ArchiveList title="Complaint archive" entries={entries} />;
 }
 
 function Field({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
