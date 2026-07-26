@@ -6,6 +6,7 @@ import {
   deleteDoc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -76,10 +77,16 @@ function toUser(snap: QueryDocumentSnapshot): PlatformUser {
   };
 }
 
-// Live stream of all users, alphabetized by name. Same shape as
-// FirestoreService.allUsersStream() in the mobile repo.
-export function subscribeUsers(cb: (users: PlatformUser[]) => void, onError?: (e: Error) => void) {
-  const q = query(collection(firestore, "users"), orderBy("name"));
+// Live stream of users, alphabetized by name. Capped at [max] so the
+// listener cost stays bounded as the user base grows. Callers that need
+// a specific slice (e.g. recent signups) should query directly instead
+// of scanning the full list client-side.
+export function subscribeUsers(
+  cb: (users: PlatformUser[]) => void,
+  onError?: (e: Error) => void,
+  max: number = 500,
+) {
+  const q = query(collection(firestore, "users"), orderBy("name"), limit(max));
   return onSnapshot(
     q,
     (s) => cb(s.docs.map(toUser)),

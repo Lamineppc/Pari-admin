@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDoc,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -130,10 +131,12 @@ export function grandTotal(o: MarketplaceOrder): number | null {
 export function subscribeOrders(
   cb: (orders: MarketplaceOrder[]) => void,
   onError?: (e: Error) => void,
+  max: number = 200,
 ) {
   const q = query(
     collection(firestore, "orders"),
     orderBy("createdAt", "desc"),
+    limit(max),
   );
   return onSnapshot(
     q,
