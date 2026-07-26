@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bell, Megaphone, Search } from "lucide-react";
+import { Bell, Megaphone, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -28,8 +28,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  fetchRecentNotifications,
   sendBroadcast,
-  subscribeAllNotifications,
   type BroadcastTarget,
   type Notification,
 } from "@/lib/notifications";
@@ -38,17 +38,22 @@ export default function NotificationsPage() {
   const [entries, setEntries] = useState<Notification[] | null>(null);
   const [q, setQ] = useState("");
   const [hideRead, setHideRead] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      setEntries(await fetchRecentNotifications(300));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load.");
+      setEntries([]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
-    const unsub = subscribeAllNotifications(
-      setEntries,
-      300,
-      (e) => {
-        toast.error(e.message);
-        setEntries([]);
-      },
-    );
-    return unsub;
+    void refresh();
   }, []);
 
   const filtered = useMemo(() => {
@@ -76,11 +81,22 @@ export default function NotificationsPage() {
           <div className="flex-1">
             <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
             <p className="text-sm text-muted-foreground">
-              Every notification sent to any user across the platform. Live
-              updates. Use Compose broadcast to push a platform-wide
+              Every notification sent to any user across the platform. Refresh
+              to pull the latest. Use Compose broadcast to push a platform-wide
               announcement.
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={refreshing}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
           <BroadcastDialog />
         </div>
         <div className="flex flex-wrap items-center gap-4 pt-2">

@@ -16,7 +16,6 @@ import {
   collectionGroup,
   getDocs,
   limit,
-  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -58,25 +57,23 @@ function toNotification(snap: QueryDocumentSnapshot): Notification {
 }
 
 /**
- * Live-updating stream of the most recent notifications across every user's
- * inbox. Uses collectionGroup so all subcollections roll into one query.
- * Bounded by [max] to keep the payload small.
+ * One-shot fetch of the most recent notifications across every user's
+ * inbox (collectionGroup query). Bounded by [max]. Prefer this over a
+ * live listener — a real-time collectionGroup on notifications gets
+ * re-invalidated on every write anywhere on the platform, and the admin
+ * history view doesn't need live updates.
  */
-export function subscribeAllNotifications(
-  cb: (entries: Notification[]) => void,
+export async function fetchRecentNotifications(
   max: number = 200,
-  onError?: (e: Error) => void,
-) {
-  const q = query(
-    collectionGroup(firestore, "notifications"),
-    orderBy("createdAt", "desc"),
-    limit(max),
+): Promise<Notification[]> {
+  const snap = await getDocs(
+    query(
+      collectionGroup(firestore, "notifications"),
+      orderBy("createdAt", "desc"),
+      limit(max),
+    ),
   );
-  return onSnapshot(
-    q,
-    (s) => cb(s.docs.map(toNotification)),
-    (err) => onError?.(err),
-  );
+  return snap.docs.map(toNotification);
 }
 
 export type BroadcastTarget = "all" | "real" | "test";
