@@ -267,7 +267,8 @@ export async function assignCourierAndIssuePin(
   // prior reassign rewound status, treat this as an in_transit reissue.
   const treatAsInTransit =
     currentStatus === "in_transit" ||
-    (currentStatus === "awaiting_pickup" && opts.skipPickupCheckpoint === true);
+    ((currentStatus === "awaiting_pickup" || currentStatus === "paid") &&
+      opts.skipPickupCheckpoint === true);
   // Reissue policy: only regenerate PINs for stages that haven't
   // been validated yet, so a mid-flight courier swap doesn't invalidate
   // a checkpoint the previous courier already completed.
@@ -292,15 +293,18 @@ export async function assignCourierAndIssuePin(
   }
   await Promise.all(writes);
   const orderUpdate: Record<string, unknown> = { courierId };
-  if (currentStatus === "paid") {
-    orderUpdate.status = "awaiting_pickup";
-    orderUpdate.awaitingPickupAt = serverTimestamp();
-  } else if (
-    currentStatus === "awaiting_pickup" &&
+  if (
+    (currentStatus === "paid" || currentStatus === "awaiting_pickup") &&
     opts.skipPickupCheckpoint === true
   ) {
     orderUpdate.status = "in_transit";
     orderUpdate.inTransitAt = serverTimestamp();
+    if (currentStatus === "paid") {
+      orderUpdate.awaitingPickupAt = serverTimestamp();
+    }
+  } else if (currentStatus === "paid") {
+    orderUpdate.status = "awaiting_pickup";
+    orderUpdate.awaitingPickupAt = serverTimestamp();
   }
   await updateDoc(orderRef, orderUpdate);
   await writeAudit({

@@ -403,21 +403,19 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
         Only the assigned courier can flip the order to delivered by entering the
         correct PIN.
       </p>
-      {order.courierId && order.status === "awaiting_pickup" && (
-        <label className="mb-3 flex items-start gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={skipPickup}
-            onChange={(e) => setSkipPickup(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            Item was already collected from the seller — skip the pickup
-            checkpoint and go straight to In transit. Only the delivery PIN
-            will be reissued.
-          </span>
-        </label>
-      )}
+      <label className="mb-3 flex items-start gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={skipPickup}
+          onChange={(e) => setSkipPickup(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          Item was already collected from the seller — skip the pickup
+          checkpoint and go straight to In transit. Only the delivery PIN
+          will be reissued. (No effect if the order is already In transit.)
+        </span>
+      </label>
       {couriers === null ? (
         <div className="text-xs text-muted-foreground">Loading couriers…</div>
       ) : couriers.length === 0 ? (
