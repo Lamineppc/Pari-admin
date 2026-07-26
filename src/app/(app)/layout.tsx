@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -23,7 +24,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur">
             <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="h-4" />
+            <Image
+              src="/pari-icon.png"
+              alt="Pari"
+              width={64}
+              height={64}
+              priority
+              className="ml-4 h-7 w-7"
+            />
+            <Separator orientation="vertical" className="mx-2 h-4" />
             <GlobalSearch />
             <UserMenu />
           </header>
