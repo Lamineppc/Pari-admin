@@ -257,17 +257,21 @@ export async function quoteOrder(
 export async function assignCourierAndIssuePin(
   orderId: string,
   courierId: string,
+  opts: { skipPickupCheckpoint?: boolean } = {},
 ): Promise<{ pin: string; pickupPin: string | null }> {
   if (!courierId.trim()) throw new Error("Pick a courier first.");
   const orderRef = doc(firestore, "orders", orderId);
   const currentSnap = await getDoc(orderRef);
   const currentStatus = String(currentSnap.data()?.status ?? "");
+  // Admin override: when the pickup already physically happened but a
+  // prior reassign rewound status, treat this as an in_transit reissue.
+  const treatAsInTransit =
+    currentStatus === "in_transit" ||
+    (currentStatus === "awaiting_pickup" && opts.skipPickupCheckpoint === true);
   // Reissue policy: only regenerate PINs for stages that haven't
   // been validated yet, so a mid-flight courier swap doesn't invalidate
   // a checkpoint the previous courier already completed.
-  //   • paid / awaiting_pickup → pickup not done: reissue both PINs.
-  //   • in_transit → pickup done, delivery pending: reissue delivery only.
-  const reissuePickup = currentStatus !== "in_transit";
+  const reissuePickup = !treatAsInTransit;
   const pin = String(Math.floor(100000 + Math.random() * 900000));
   const pickupPin = reissuePickup
     ? String(Math.floor(100000 + Math.random() * 900000))
@@ -291,6 +295,12 @@ export async function assignCourierAndIssuePin(
   if (currentStatus === "paid") {
     orderUpdate.status = "awaiting_pickup";
     orderUpdate.awaitingPickupAt = serverTimestamp();
+  } else if (
+    currentStatus === "awaiting_pickup" &&
+    opts.skipPickupCheckpoint === true
+  ) {
+    orderUpdate.status = "in_transit";
+    orderUpdate.inTransitAt = serverTimestamp();
   }
   await updateDoc(orderRef, orderUpdate);
   await writeAudit({
