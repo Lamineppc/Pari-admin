@@ -26,6 +26,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 const platformNav = [
@@ -47,19 +48,38 @@ const opsNav = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { state } = useSidebar();
+  const collapsed = state === "collapsed";
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
       <SidebarHeader>
-        <Link href="/dashboard" className="flex items-center gap-2 px-2 py-2">
-          <Image
-            src="/pari-logo.png"
-            alt="Pari"
-            width={220}
-            height={88}
-            priority
-            className="h-8 w-auto"
-          />
-          <span className="text-xs text-muted-foreground">Super-admin</span>
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2 px-2 py-2"
+          aria-label="Pari"
+        >
+          {collapsed ? (
+            <Image
+              src="/pari-icon.png"
+              alt="Pari"
+              width={64}
+              height={64}
+              priority
+              className="h-7 w-7"
+            />
+          ) : (
+            <>
+              <Image
+                src="/pari-logo.png"
+                alt="Pari"
+                width={220}
+                height={88}
+                priority
+                className="h-8 w-auto"
+              />
+              <span className="text-xs text-muted-foreground">Super-admin</span>
+            </>
+          )}
         </Link>
       </SidebarHeader>
       <SidebarContent>
