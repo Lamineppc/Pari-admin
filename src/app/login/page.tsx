@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { firebaseAuth, SUPER_ADMIN_UID } from "@/lib/firebase";
@@ -45,7 +46,17 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-6">
+      <div className="flex justify-center">
+        <Image
+          src="/pari-logo.png"
+          alt="Pari"
+          width={220}
+          height={88}
+          priority
+          className="h-auto w-44"
+        />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>Pari Admin</CardTitle>

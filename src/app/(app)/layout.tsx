@@ -1,5 +1,14 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+
+export const metadata: Metadata = {
+  icons: {
+    icon: "/pari-icon.png",
+    shortcut: "/pari-icon.png",
+    apple: "/pari-icon.png",
+  },
+};
 import { AppSidebar } from "@/components/app-sidebar";
 import { UserMenu } from "@/components/user-menu";
 import { AuthGuard } from "@/components/auth-guard";
