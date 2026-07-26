@@ -93,7 +93,7 @@ export default function TicketDetailPage() {
 
   if (ticket === undefined) {
     return (
-      <div className="mx-auto max-w-4xl space-y-4">
+      <div className="w-full space-y-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-32 w-full" />
       </div>
@@ -101,14 +101,14 @@ export default function TicketDetailPage() {
   }
   if (ticket === null) {
     return (
-      <div className="mx-auto max-w-4xl">
+      <div className="w-full">
         <p className="text-sm text-muted-foreground">Ticket not found.</p>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6">
+    <div className="flex w-full flex-col gap-6">
       <header className="flex flex-col gap-2">
         <div>
           <Button
