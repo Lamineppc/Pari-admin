@@ -356,7 +356,7 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
   const [busy, setBusy] = useState(false);
   const [issuedPins, setIssuedPins] = useState<{
     pin: string;
-    pickupPin: string;
+    pickupPin: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -389,8 +389,10 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
       </div>
       {order.courierId && (
         <p className="mb-2 text-xs text-muted-foreground">
-          Currently assigned: <span className="font-mono">{order.courierId}</span>. Picking a new
-          courier will reissue both PINs and reset status to Awaiting pickup.
+          Currently assigned: <span className="font-mono">{order.courierId}</span>.{" "}
+          {order.status === "in_transit"
+            ? "Pickup already completed — only the delivery PIN will be reissued; status stays In transit."
+            : "Both PINs will be reissued; status stays at Awaiting pickup."}
         </p>
       )}
       <p className="mb-3 text-xs text-muted-foreground">
@@ -432,11 +434,13 @@ function AssignCourierPanel({ order }: { order: MarketplaceOrder }) {
             pin={issuedPins.pin}
             explainer="Buyer says this PIN to the courier at drop-off. Courier types it in-app to close the delivery."
           />
-          <PinCallout
-            title="Pickup PIN (courier)"
-            pin={issuedPins.pickupPin}
-            explainer="Courier says this PIN to the seller at pickup. Seller types it in-app to release the item."
-          />
+          {issuedPins.pickupPin && (
+            <PinCallout
+              title="Pickup PIN (courier)"
+              pin={issuedPins.pickupPin}
+              explainer="Courier says this PIN to the seller at pickup. Seller types it in-app to release the item."
+            />
+          )}
         </div>
       )}
     </section>

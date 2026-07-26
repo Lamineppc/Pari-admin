@@ -257,39 +257,56 @@ export async function quoteOrder(
 export async function assignCourierAndIssuePin(
   orderId: string,
   courierId: string,
-): Promise<{ pin: string; pickupPin: string }> {
+): Promise<{ pin: string; pickupPin: string | null }> {
   if (!courierId.trim()) throw new Error("Pick a courier first.");
-  const pin = String(Math.floor(100000 + Math.random() * 900000));
-  const pickupPin = String(Math.floor(100000 + Math.random() * 900000));
-  // PINs go into secured subcollections — seller has zero read
-  // access to either. Rules validate the caller-submitted pin
-  // against these subdocs at transition time.
   const orderRef = doc(firestore, "orders", orderId);
-  await Promise.all([
+  const currentSnap = await getDoc(orderRef);
+  const currentStatus = String(currentSnap.data()?.status ?? "");
+  // Reissue policy: only regenerate PINs for stages that haven't
+  // been validated yet, so a mid-flight courier swap doesn't invalidate
+  // a checkpoint the previous courier already completed.
+  //   • paid / awaiting_pickup → pickup not done: reissue both PINs.
+  //   • in_transit → pickup done, delivery pending: reissue delivery only.
+  const reissuePickup = currentStatus !== "in_transit";
+  const pin = String(Math.floor(100000 + Math.random() * 900000));
+  const pickupPin = reissuePickup
+    ? String(Math.floor(100000 + Math.random() * 900000))
+    : null;
+  const writes: Promise<unknown>[] = [
     setDoc(doc(orderRef, "secure", "delivery"), {
       pin,
       updatedAt: serverTimestamp(),
     }),
-    setDoc(doc(orderRef, "secure", "pickup"), {
-      pin: pickupPin,
-      updatedAt: serverTimestamp(),
-    }),
-  ]);
-  await updateDoc(orderRef, {
-    courierId,
-    status: "awaiting_pickup",
-    awaitingPickupAt: serverTimestamp(),
-  });
+  ];
+  if (reissuePickup && pickupPin) {
+    writes.push(
+      setDoc(doc(orderRef, "secure", "pickup"), {
+        pin: pickupPin,
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  }
+  await Promise.all(writes);
+  const orderUpdate: Record<string, unknown> = { courierId };
+  if (currentStatus === "paid") {
+    orderUpdate.status = "awaiting_pickup";
+    orderUpdate.awaitingPickupAt = serverTimestamp();
+  }
+  await updateDoc(orderRef, orderUpdate);
   await writeAudit({
     action: "assign_courier_and_issue_pin",
     targetType: "order",
     targetId: orderId,
     test: false,
-    after: { courierId, pin: "***", pickupPin: "***" },
+    after: {
+      courierId,
+      pin: "***",
+      pickupPin: reissuePickup ? "***" : "unchanged",
+      priorStatus: currentStatus,
+    },
   });
-  const orderSnap = await getDoc(doc(firestore, "orders", orderId));
-  const buyerId = String(orderSnap.data()?.buyerId ?? "");
-  const sellerId = String(orderSnap.data()?.sellerId ?? "");
+  const buyerId = String(currentSnap.data()?.buyerId ?? "");
+  const sellerId = String(currentSnap.data()?.sellerId ?? "");
   if (buyerId) {
     await addDoc(collection(firestore, "users", buyerId, "notifications"), {
       type: "order_delivery_pin",
@@ -300,7 +317,7 @@ export async function assignCourierAndIssuePin(
       metadata: { orderId, pin },
     });
   }
-  if (courierId) {
+  if (courierId && reissuePickup && pickupPin) {
     await addDoc(
       collection(firestore, "users", courierId, "notifications"),
       {
@@ -312,8 +329,20 @@ export async function assignCourierAndIssuePin(
         metadata: { orderId, pickupPin },
       },
     );
+  } else if (courierId && !reissuePickup) {
+    await addDoc(
+      collection(firestore, "users", courierId, "notifications"),
+      {
+        type: "delivery_takeover",
+        title: "Delivery reassigned to you",
+        body: "You're now the courier for an in-transit order. Ask the buyer for the delivery PIN at drop-off.",
+        isRead: false,
+        createdAt: serverTimestamp(),
+        metadata: { orderId },
+      },
+    );
   }
-  if (sellerId) {
+  if (sellerId && reissuePickup) {
     await addDoc(
       collection(firestore, "users", sellerId, "notifications"),
       {
