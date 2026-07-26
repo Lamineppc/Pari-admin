@@ -54,7 +54,7 @@ export default function LoginPage() {
           width={220}
           height={88}
           priority
-          className="h-auto w-44"
+          className="h-auto w-72"
         />
       </div>
       <Card>
