@@ -169,19 +169,25 @@ export async function runEscalationDetector(
   const managerUid = managersSnap.empty ? null : managersSnap.docs[0].id;
 
   async function phase1PaidCount(uid: string): Promise<number> {
+    // Push the cycleNumber upper bound + type filter server-side so we
+    // only scan Phase 1 contribution docs for this user instead of
+    // every payment they ever made in the group. Requires composite
+    // index (userId ASC, type ASC, cycleNumber ASC) declared in
+    // firestore.indexes.json.
     const snap = await getDocs(
       query(
         collection(firestore, "groups", groupId, "payments"),
         where("userId", "==", uid),
+        where("type", "==", "contribution"),
+        where("cycleNumber", "<=", halfway),
       ),
     );
     const paidCycles = new Set<number>();
     for (const d of snap.docs) {
       const data = d.data();
-      if ((data.type as string | undefined) !== "contribution") continue;
       if (data.status === "voided") continue;
       const cn = Number(data.cycleNumber ?? 0);
-      if (cn >= 1 && cn <= halfway) paidCycles.add(cn);
+      if (cn >= 1) paidCycles.add(cn);
     }
     return paidCycles.size;
   }

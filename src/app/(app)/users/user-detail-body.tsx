@@ -46,7 +46,7 @@ import {
   subscribeSupportMessages,
   subscribeUserAdminNotes,
   subscribeUserContact,
-  subscribeUserGroups,
+  fetchUserGroups,
   subscribeUserPayments,
   updateUserAdminNotes,
   updateUserEmail,
@@ -143,8 +143,17 @@ export function UserDetailBody({
   }, [user.uid]);
 
   useEffect(() => {
-    const unsub = subscribeUserGroups(user.uid, setGroups, () => setGroups([]));
-    return unsub;
+    let cancelled = false;
+    fetchUserGroups(user.uid)
+      .then((rows) => {
+        if (!cancelled) setGroups(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setGroups([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [user.uid]);
 
   useEffect(() => {

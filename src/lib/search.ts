@@ -3,7 +3,7 @@
 // collection outgrows that, swap the specific stream for server-side
 // prefix queries.
 
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { firestore } from "./firebase";
 
 export type SearchResult =
@@ -46,10 +46,18 @@ export async function search(
   // Groups: name / id / inviteCode / createdBy
   // Users:  name / email / username / uid
   // Stores: storeName / ownerName / ownerId
+  //
+  // Substring match without a real search index (Algolia/Typesense) means
+  // scanning the collection client-side. Cap each scan at SCAN_LIMIT so
+  // cost stays bounded as the platform grows. The exact-lookup pass
+  // below still catches pasted IDs that fall outside the scanned window.
+  const SCAN_LIMIT = 500;
   const [groupsSnap, usersSnap, storesSnap] = await Promise.all([
-    getDocs(collection(firestore, "groups")),
-    getDocs(collection(firestore, "users")),
-    getDocs(collection(firestore, "stores")).catch(() => null),
+    getDocs(query(collection(firestore, "groups"), limit(SCAN_LIMIT))),
+    getDocs(query(collection(firestore, "users"), limit(SCAN_LIMIT))),
+    getDocs(
+      query(collection(firestore, "stores"), limit(SCAN_LIMIT)),
+    ).catch(() => null),
   ]);
 
   const groups: SearchResult[] = [];

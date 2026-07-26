@@ -112,43 +112,41 @@ export type UserGroupMembership = {
 /// `memberIds` array (indexed for array-contains) then reads each
 /// group's member subdoc for role/position. Not paginated — the
 /// panel expects roster sizes in the low hundreds max.
-export function subscribeUserGroups(
+/// One-shot fetch of the groups a user belongs to plus their per-group
+/// membership row. Was previously a live listener that re-fired the full
+/// N+1 (getDoc per group) on any change to any of the user's groups —
+/// at 10k users × ~500 avg group churn that dominated the admin bill.
+/// Admin detail page can refresh on demand; realtime not required.
+export async function fetchUserGroups(
   uid: string,
-  cb: (rows: UserGroupMembership[]) => void,
-  onError?: (e: Error) => void,
-) {
-  const q = query(
-    collection(firestore, "groups"),
-    where("memberIds", "array-contains", uid),
+): Promise<UserGroupMembership[]> {
+  const snap = await getDocs(
+    query(
+      collection(firestore, "groups"),
+      where("memberIds", "array-contains", uid),
+    ),
   );
-  return onSnapshot(
-    q,
-    async (snap) => {
-      const rows = await Promise.all(
-        snap.docs.map(async (g) => {
-          const memberSnap = await getDoc(doc(g.ref, "members", uid));
-          const m = memberSnap.data() ?? {};
-          const groupName = String(g.data().name ?? g.id);
-          const gd = g.data();
-          return {
-            groupId: g.id,
-            groupName,
-            role: (m.role as UserGroupMembership["role"] | undefined) ?? "member",
-            position: Number(m.position ?? 0),
-            joinCycle: Number(m.joinCycle ?? 1),
-            payoutCycle:
-              typeof m.payoutCycle === "number" ? m.payoutCycle : null,
-            kicked: m.kicked === true,
-            groupStatus: String(gd.status ?? ""),
-            isCreator: gd.createdBy === uid,
-          };
-        }),
-      );
-      rows.sort((a, b) => a.groupName.localeCompare(b.groupName));
-      cb(rows);
-    },
-    (err) => onError?.(err),
+  const rows = await Promise.all(
+    snap.docs.map(async (g) => {
+      const memberSnap = await getDoc(doc(g.ref, "members", uid));
+      const m = memberSnap.data() ?? {};
+      const gd = g.data();
+      return {
+        groupId: g.id,
+        groupName: String(gd.name ?? g.id),
+        role: (m.role as UserGroupMembership["role"] | undefined) ?? "member",
+        position: Number(m.position ?? 0),
+        joinCycle: Number(m.joinCycle ?? 1),
+        payoutCycle:
+          typeof m.payoutCycle === "number" ? m.payoutCycle : null,
+        kicked: m.kicked === true,
+        groupStatus: String(gd.status ?? ""),
+        isCreator: gd.createdBy === uid,
+      };
+    }),
   );
+  rows.sort((a, b) => a.groupName.localeCompare(b.groupName));
+  return rows;
 }
 
 export type UserPaymentEntry = {
