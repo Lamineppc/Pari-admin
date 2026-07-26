@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,7 +13,6 @@ import {
   Users,
   UsersRound,
   Store,
-  ShieldCheck,
   UserX,
   Wrench,
 } from "lucide-react";
@@ -50,15 +50,17 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <ShieldCheck className="h-4 w-4" />
-          </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold">Pari Admin</span>
-            <span className="text-xs text-muted-foreground">Super-admin panel</span>
-          </div>
-        </div>
+        <Link href="/dashboard" className="flex items-center gap-2 px-2 py-2">
+          <Image
+            src="/pari-logo.png"
+            alt="Pari"
+            width={220}
+            height={88}
+            priority
+            className="h-8 w-auto"
+          />
+          <span className="text-xs text-muted-foreground">Super-admin</span>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
