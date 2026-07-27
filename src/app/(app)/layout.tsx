@@ -30,7 +30,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               width={64}
               height={64}
               priority
-              className="ml-4 h-5 w-5"
+              className="ml-4 h-7 w-7"
             />
             <Separator orientation="vertical" className="mx-2 h-4" />
             <GlobalSearch />
