@@ -68,7 +68,7 @@ import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createGroupForUser } from "@/lib/groups";
-import { createStoreForUser, fetchUserStores, type Store } from "@/lib/stores";
+import { createStoreForUser, fetchUserIndividualPosting, fetchUserStores, type Store, type StoreListing } from "@/lib/stores";
 import { setUserCourierRole } from "@/lib/orders";
 import { CountrySelect } from "@/components/country-select";
 import { findCountry } from "@/lib/countries";
@@ -111,6 +111,7 @@ export function UserDetailBody({
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
   const [stores, setStores] = useState<Store[] | null>(null);
   const [storesReloadKey, setStoresReloadKey] = useState(0);
+  const [individualPosting, setIndividualPosting] = useState<StoreListing | null | undefined>(undefined);
   const [contact, setContact] = useState<UserContact | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [escalationArchive, setEscalationArchive] = useState<
@@ -172,6 +173,20 @@ export function UserDetailBody({
       cancelled = true;
     };
   }, [user.uid, storesReloadKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchUserIndividualPosting(user.uid)
+      .then((p) => {
+        if (!cancelled) setIndividualPosting(p);
+      })
+      .catch(() => {
+        if (!cancelled) setIndividualPosting(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user.uid]);
 
   useEffect(() => {
     const unsub = subscribeUserPayments(user.uid, setPayments, () =>
@@ -702,6 +717,9 @@ export function UserDetailBody({
 
       <Separator />
       <UserGroupsPanel groups={groups} user={user} />
+
+      <Separator />
+      <UserIndividualPostingPanel posting={individualPosting} />
 
       <Separator />
       <UserStoresPanel
@@ -1612,6 +1630,65 @@ function CreateGroupForUserDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function UserIndividualPostingPanel({
+  posting,
+}: {
+  posting: StoreListing | null | undefined;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Individual Posting
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        The single marketplace listing any auth user can post without super
+        admin store approval.
+      </p>
+      {posting === undefined && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {posting === null && (
+        <div className="text-xs text-muted-foreground">No individual posting.</div>
+      )}
+      {posting && (
+        <div className="flex items-center gap-3 rounded-md border p-2">
+          {posting.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={posting.imageUrl}
+              alt=""
+              className="h-16 w-16 rounded object-cover"
+            />
+          ) : (
+            <div className="h-16 w-16 rounded bg-muted" />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">
+              {posting.title || "(no title)"}
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {posting.currency} {posting.price.toLocaleString()}
+              </span>
+              <span>·</span>
+              <span>{posting.category}</span>
+              {posting.likedByCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span>♥ {posting.likedByCount}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <Badge variant="outline" className="text-[10px]">
+            {posting.status}
+          </Badge>
+        </div>
+      )}
+    </section>
   );
 }
 

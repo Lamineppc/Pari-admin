@@ -197,6 +197,36 @@ export async function reinstateStore(
   });
 }
 
+/** Fetches the most recent individual (non-store) marketplace listing
+ *  for [uid], or null if they have none. "Individual posting" is the
+ *  one item any authenticated user can list without super-admin store
+ *  approval — sellerType is anything other than 'store'. */
+export async function fetchUserIndividualPosting(
+  uid: string,
+): Promise<StoreListing | null> {
+  const snap = await getDocs(
+    query(collection(firestore, "marketplace"), where("sellerId", "==", uid)),
+  );
+  const items: StoreListing[] = [];
+  for (const d of snap.docs) {
+    const data = d.data();
+    if ((data.sellerType as string | undefined) === "store") continue;
+    items.push({
+      id: d.id,
+      title: (data.title as string | undefined) ?? "",
+      price: Number(data.price ?? 0),
+      currency: (data.currency as string | undefined) ?? "CFA",
+      category: (data.category as string | undefined) ?? "Other",
+      status: (data.status as string | undefined) ?? "active",
+      imageUrl: (data.imageUrl as string | undefined) ?? null,
+      likedByCount: Array.isArray(data.likedBy) ? data.likedBy.length : 0,
+      createdAt: (data.createdAt as Timestamp | undefined)?.toDate() ?? null,
+    });
+  }
+  items.sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+  return items[0] ?? null;
+}
+
 /** Live stream of every marketplace listing published under this store's
  *  owner. The panel filters on sellerType==='store' to exclude the
  *  owner's one personal listing (if they have one). */
