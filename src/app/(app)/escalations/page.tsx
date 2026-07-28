@@ -22,7 +22,6 @@ import {
 } from "@/lib/groups";
 import { subscribeUsers, type PlatformUser } from "@/lib/users";
 import { subscribeStores, type Store } from "@/lib/stores";
-import { StoreDetailSheet } from "../store-applications/store-detail-sheet";
 import {
   dismissGroupEscalationArchive,
   dismissStoreEscalationArchive,
@@ -97,7 +96,6 @@ export default function EscalationsPage() {
   const [users, setUsers] = useState<PlatformUser[] | null>(null);
   const [stores, setStores] = useState<Store[] | null>(null);
   const [sortBy, setSortBy] = useState<SortKey>("age");
-  const [openStore, setOpenStore] = useState<Store | null>(null);
 
   useEffect(() => {
     const u1 = subscribeGroups(setGroups, (e) => {
@@ -317,7 +315,7 @@ export default function EscalationsPage() {
                   {escalatedStores.map((s) => (
                     <TableRow
                       key={`s_${s.id}`}
-                      onClick={() => setOpenStore(s)}
+                      onClick={() => router.push(`/store-applications/${s.id}`)}
                       className="cursor-pointer"
                     >
                       <TableCell className="font-medium">
@@ -519,7 +517,7 @@ export default function EscalationsPage() {
               {escalatedStores?.map((s) => (
                 <TableRow
                   key={s.id}
-                  onClick={() => setOpenStore(s)}
+                  onClick={() => router.push(`/store-applications/${s.id}`)}
                   className="cursor-pointer"
                 >
                   <TableCell className="font-medium">
@@ -546,10 +544,6 @@ export default function EscalationsPage() {
         </div>
       )}
 
-      <StoreDetailSheet
-        store={openStore}
-        onOpenChange={(open) => !open && setOpenStore(null)}
-      />
     </div>
   );
 }

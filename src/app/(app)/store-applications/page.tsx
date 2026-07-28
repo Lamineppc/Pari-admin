@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Store, Search, CheckCircle2, ShieldOff, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StoreDetailSheet } from "./store-detail-sheet";
 import { StoreStatusBadge } from "./store-status-badge";
 import { approveStore, rejectStore, revokeStore, subscribeStores, type Store as StoreDoc, type StoreStatus } from "@/lib/stores";
 import { BulkActionBar } from "@/components/bulk-action-bar";
@@ -43,10 +42,10 @@ function matchesFilter(status: StoreStatus, filter: Filter): boolean {
 }
 
 export default function StoreApplicationsPage() {
+  const router = useRouter();
   const [stores, setStores] = useState<StoreDoc[] | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const searchParams = useSearchParams();
@@ -59,11 +58,12 @@ export default function StoreApplicationsPage() {
     return unsub;
   }, []);
 
-  // Deep-link support for global search.
+  // Deep-link support for global search: legacy ?selected=<id> now
+  // navigates to the dedicated detail page.
   useEffect(() => {
     const sel = searchParams.get("selected");
-    if (sel) setSelectedId(sel);
-  }, [searchParams]);
+    if (sel) router.replace(`/store-applications/${sel}`);
+  }, [searchParams, router]);
 
   const counts = useMemo(() => {
     if (!stores) return null;
@@ -91,7 +91,6 @@ export default function StoreApplicationsPage() {
     });
   }, [stores, q, filter]);
 
-  const selected = stores?.find((s) => s.id === selectedId) ?? null;
   const allVisibleChecked =
     filtered !== null && filtered.length > 0 && filtered.every((s) => checkedIds.has(s.id));
 
@@ -250,7 +249,7 @@ export default function StoreApplicationsPage() {
               return (
                 <TableRow
                   key={s.id}
-                  onClick={() => setSelectedId(s.id)}
+                  onClick={() => router.push(`/store-applications/${s.id}`)}
                   className="cursor-pointer"
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -281,11 +280,6 @@ export default function StoreApplicationsPage() {
           </TableBody>
         </Table>
       </div>
-
-      <StoreDetailSheet
-        store={selected}
-        onOpenChange={(o) => !o && setSelectedId(null)}
-      />
 
       <BulkActionBar count={checkedIds.size} onClear={() => setCheckedIds(new Set())}>
         <Button variant="default" size="sm" disabled={busy} onClick={() => runBulk("approve")}>

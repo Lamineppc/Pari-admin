@@ -3,13 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, ChevronRight, Pause, Play, ShieldOff, XCircle } from "lucide-react";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,13 +50,7 @@ function fmtRelative(d: Date | null): string {
   return `${years}y ago`;
 }
 
-export function StoreDetailSheet({
-  store,
-  onOpenChange,
-}: {
-  store: Store | null;
-  onOpenChange: (open: boolean) => void;
-}) {
+export function StoreDetailBody({ store }: { store: Store }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<Action | null>(null);
   const [listings, setListings] = useState<StoreListing[] | null>(null);
@@ -87,8 +74,6 @@ export function StoreDetailSheet({
     () => (listings ? computeMetrics(listings) : null),
     [listings],
   );
-
-  if (!store) return null;
 
   async function run(kind: Action) {
     setBusy(kind);
@@ -119,17 +104,16 @@ export function StoreDetailSheet({
   }
 
   return (
-    <Sheet open={!!store} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            {store.storeName || "(no name)"}
-            <StoreStatusBadge status={store.status} />
-          </SheetTitle>
-          <SheetDescription>{store.category}</SheetDescription>
-        </SheetHeader>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-0.5">
+        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+          {store.storeName || "(no name)"}
+          <StoreStatusBadge status={store.status} />
+        </h1>
+        <p className="text-sm text-muted-foreground">{store.category}</p>
+      </div>
 
-        <div className="flex flex-col gap-4 px-4 pb-4">
+      <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Field label="Owner" value={store.ownerName || "—"} />
             <Field label="Owner uid" value={store.ownerId} mono />
@@ -357,8 +341,7 @@ export function StoreDetailSheet({
             )}
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+    </div>
   );
 }
 

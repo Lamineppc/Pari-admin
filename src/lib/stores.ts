@@ -92,6 +92,19 @@ function toStore(snap: QueryDocumentSnapshot): Store {
   };
 }
 
+// Live stream of a single store. cb receives null if the doc doesn't exist.
+export function subscribeStore(
+  storeId: string,
+  cb: (store: Store | null) => void,
+  onError?: (e: Error) => void,
+) {
+  return onSnapshot(
+    doc(firestore, "stores", storeId),
+    (snap) => cb(snap.exists() ? toStore(snap as QueryDocumentSnapshot) : null),
+    (err) => onError?.(err),
+  );
+}
+
 // Live stream of every store application, newest first.
 export function subscribeStores(cb: (stores: Store[]) => void, onError?: (e: Error) => void) {
   const q = query(collection(firestore, "stores"), orderBy("createdAt", "desc"));

@@ -78,7 +78,7 @@ export function GlobalSearch() {
     setResults(null);
     if (r.kind === "group") router.push(`/groups/${r.id}`);
     else if (r.kind === "user") router.push(`/users?selected=${r.id}`);
-    else router.push(`/store-applications?selected=${r.id}`);
+    else router.push(`/store-applications/${r.id}`);
   }
 
   const showEmpty = q.trim().length > 0 && !loading && results && flat.length === 0;
