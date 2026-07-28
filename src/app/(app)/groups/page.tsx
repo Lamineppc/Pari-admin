@@ -51,7 +51,8 @@ export default function GroupsPage() {
       (g) =>
         g.name.toLowerCase().includes(needle) ||
         g.id.toLowerCase().includes(needle) ||
-        g.createdBy.toLowerCase().includes(needle),
+        g.createdBy.toLowerCase().includes(needle) ||
+        g.memberIds.some((uid) => uid.toLowerCase().includes(needle)),
     );
   }, [groups, q]);
 
@@ -93,7 +94,7 @@ export default function GroupsPage() {
         <div className="relative max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search by name, id, or admin uid…"
+            placeholder="Search by name, id, or member uid…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="pl-9"
