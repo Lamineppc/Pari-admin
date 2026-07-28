@@ -45,7 +45,7 @@ function matchesFilter(status: StoreStatus, filter: Filter): boolean {
 export default function StoreApplicationsPage() {
   const [stores, setStores] = useState<StoreDoc[] | null>(null);
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<Filter>("pending");
+  const [filter, setFilter] = useState<Filter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -172,7 +172,7 @@ export default function StoreApplicationsPage() {
             <Store className="h-4 w-4" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Store applications</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Stores</h1>
             <p className="text-sm text-muted-foreground">
               Approve, reject, or revoke marketplace vendors. Click a row for details.
             </p>
@@ -180,7 +180,7 @@ export default function StoreApplicationsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {(["pending", "active", "suspended", "rejected", "all"] as Filter[]).map((f) => (
+          {(["all", "pending", "active", "suspended", "rejected"] as Filter[]).map((f) => (
             <Button
               key={f}
               size="sm"

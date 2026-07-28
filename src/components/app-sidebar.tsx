@@ -33,7 +33,7 @@ const platformNav = [
   { title: "Escalations", href: "/escalations", icon: AlertTriangle },
   { title: "Groups", href: "/groups", icon: UsersRound },
   { title: "Users", href: "/users", icon: Users },
-  { title: "Store applications", href: "/store-applications", icon: Store },
+  { title: "Stores", href: "/store-applications", icon: Store },
   { title: "Orders", href: "/orders", icon: Package },
 ];
 
