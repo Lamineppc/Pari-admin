@@ -99,6 +99,7 @@ export type AuditAction =
   | "cancel_pending_split"
   | "purge_orphan_sim_users"
   | "create_group_for_user"
+  | "create_store_for_user"
   | "quote_order"
   | "assign_courier_and_issue_pin"
   | "cancel_order"

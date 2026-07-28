@@ -68,6 +68,7 @@ import { ArchiveList } from "@/components/escalation-archive-list";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createGroupForUser } from "@/lib/groups";
+import { createStoreForUser, fetchUserStores, type Store } from "@/lib/stores";
 import { setUserCourierRole } from "@/lib/orders";
 import { CountrySelect } from "@/components/country-select";
 import { findCountry } from "@/lib/countries";
@@ -108,6 +109,8 @@ export function UserDetailBody({
   const [topUpAmount, setTopUpAmount] = useState("50000");
   const [groups, setGroups] = useState<UserGroupMembership[] | null>(null);
   const [payments, setPayments] = useState<UserPaymentEntry[] | null>(null);
+  const [stores, setStores] = useState<Store[] | null>(null);
+  const [storesReloadKey, setStoresReloadKey] = useState(0);
   const [contact, setContact] = useState<UserContact | null>(null);
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [escalationArchive, setEscalationArchive] = useState<
@@ -155,6 +158,20 @@ export function UserDetailBody({
       cancelled = true;
     };
   }, [user.uid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchUserStores(user.uid)
+      .then((rows) => {
+        if (!cancelled) setStores(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setStores([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user.uid, storesReloadKey]);
 
   useEffect(() => {
     const unsub = subscribeUserPayments(user.uid, setPayments, () =>
@@ -685,6 +702,13 @@ export function UserDetailBody({
 
       <Separator />
       <UserGroupsPanel groups={groups} user={user} />
+
+      <Separator />
+      <UserStoresPanel
+        stores={stores}
+        user={user}
+        onCreated={() => setStoresReloadKey((k) => k + 1)}
+      />
 
       <Separator />
       <UserPaymentsPanel payments={payments} />
@@ -1584,6 +1608,172 @@ function CreateGroupForUserDialog({
           </Button>
           <Button size="sm" onClick={save} disabled={busy || !name.trim()}>
             {busy ? "Creating…" : "Create group"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserStoresPanel({
+  stores,
+  user,
+  onCreated,
+}: {
+  stores: Store[] | null;
+  user: PlatformUser;
+  onCreated: () => void;
+}) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const activeOwned = (stores ?? []).find(
+    (s) => s.status === "pending" || s.status === "active" || s.status === "suspended",
+  );
+  const blocked = Boolean(activeOwned);
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Stores ({stores?.length ?? "…"})
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={blocked}
+          title={
+            blocked
+              ? `Already owns "${activeOwned?.storeName}" (${activeOwned?.status}). One store per owner.`
+              : undefined
+          }
+          onClick={() => setCreateOpen(true)}
+        >
+          Create store for this user
+        </Button>
+      </div>
+      {blocked && (
+        <p className="text-[11px] text-muted-foreground">
+          Already owns {activeOwned?.storeName} ({activeOwned?.status}). Revoke or
+          reject that one before creating another.
+        </p>
+      )}
+      {stores === null && (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      )}
+      {stores && stores.length === 0 && (
+        <div className="text-xs text-muted-foreground">No stores.</div>
+      )}
+      {stores && stores.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {stores.map((s) => (
+            <Link
+              key={s.id}
+              href={`/store-applications?store=${s.id}`}
+              className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
+            >
+              <span className="flex-1 truncate font-medium">{s.storeName}</span>
+              <Badge variant="outline" className="text-[10px] uppercase">
+                {s.status}
+              </Badge>
+              <span className="text-xs text-muted-foreground">{s.category}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+      {createOpen && (
+        <CreateStoreForUserDialog
+          user={user}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            onCreated();
+            setCreateOpen(false);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function CreateStoreForUserDialog({
+  user,
+  onClose,
+  onCreated,
+}: {
+  user: PlatformUser;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [storeName, setStoreName] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("General");
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!storeName.trim()) return toast.error("Store name required.");
+    setBusy(true);
+    try {
+      await createStoreForUser({
+        targetUid: user.uid,
+        targetName: user.name || user.email,
+        storeName,
+        description,
+        category,
+      });
+      toast.success("Store created for this user.");
+      onCreated();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Create store failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold">
+              Create store for {user.name || user.email}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Provisions an active store owned by this user — skips the pending
+              review queue. One store per owner still applies.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <Row label="Store name">
+            <Input
+              value={storeName}
+              onChange={(e) => setStoreName(e.target.value)}
+              placeholder="Aïcha's Boutique"
+            />
+          </Row>
+          <Row label="Category">
+            <Input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="General"
+            />
+          </Row>
+          <Row label="Description">
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional"
+              className="flex-1"
+              rows={3}
+            />
+          </Row>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={busy || !storeName.trim()}>
+            {busy ? "Creating…" : "Create store"}
           </Button>
         </div>
       </div>

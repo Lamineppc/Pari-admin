@@ -4,10 +4,13 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   type QueryDocumentSnapshot,
@@ -297,6 +300,83 @@ export async function setStoreEscalation(
     after: { escalationFlag: flag },
     metadata: { ownerId: store.ownerId, storeName: store.storeName },
   });
+}
+
+/** Super-admin helper — create a store on behalf of [targetUid] and
+ *  mark it active straight away (the admin doing the creation is
+ *  themselves the approver, so no pending queue trip). Enforces the
+ *  same one-store-per-owner rule the panel expects: any existing
+ *  store that isn't rejected/revoked blocks a second creation.
+ */
+export async function createStoreForUser(args: {
+  targetUid: string;
+  targetName: string;
+  storeName: string;
+  description: string;
+  category: string;
+}): Promise<{ storeId: string }> {
+  const storeName = args.storeName.trim();
+  const category = args.category.trim() || "General";
+  if (!storeName) throw new Error("Store name required.");
+  if (!args.targetUid) throw new Error("Target user required.");
+
+  const existing = await getDocs(
+    query(
+      collection(firestore, "stores"),
+      where("ownerId", "==", args.targetUid),
+      where("status", "in", ["pending", "active", "suspended"]),
+      limit(1),
+    ),
+  );
+  if (!existing.empty) {
+    throw new Error(
+      "This user already has a store. One store per owner.",
+    );
+  }
+
+  const storeRef = doc(collection(firestore, "stores"));
+  await setDoc(storeRef, {
+    id: storeRef.id,
+    storeName,
+    ownerId: args.targetUid,
+    ownerName: args.targetName || args.targetUid,
+    description: args.description.trim(),
+    category,
+    status: "active",
+    createdAt: serverTimestamp(),
+    approvedAt: serverTimestamp(),
+  });
+
+  await notify(args.targetUid, {
+    type: "store_approved",
+    title: "Store created",
+    body: `A store "${storeName}" has been created for you. You can now list items as a store vendor.`,
+  });
+
+  await writeAudit({
+    action: "create_store_for_user",
+    targetType: "store",
+    targetId: storeRef.id,
+    test: args.targetUid.startsWith("sim_"),
+    after: {
+      ownerId: args.targetUid,
+      storeName,
+      category,
+      status: "active",
+    },
+  });
+
+  return { storeId: storeRef.id };
+}
+
+/** One-shot fetch of every store [uid] owns. Used by the user detail
+ *  panel to render the stores list and decide whether the create-store
+ *  button should be blocked (one-store-per-owner rule). */
+export async function fetchUserStores(uid: string): Promise<Store[]> {
+  const snap = await getDocs(
+    query(collection(firestore, "stores"), where("ownerId", "==", uid)),
+  );
+  return snap.docs.map(toStore);
 }
 
 export async function revokeStore(
