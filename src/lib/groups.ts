@@ -64,7 +64,6 @@ export type Group = {
   // platform wallet. Defaults to 0 for legacy groups.
   penaltyPerMissedCycle: number;
   useSlots: boolean;
-  memberIds: string[];
 };
 
 function toGroup(snap: QueryDocumentSnapshot): Group {
@@ -93,7 +92,6 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
       (d.moneyProvider as "mock" | "orange_money" | undefined) ?? null,
     penaltyPerMissedCycle: Number(d.penaltyPerMissedCycle ?? 0),
     useSlots: Boolean(d.useSlots ?? false),
-    memberIds: Array.isArray(d.memberIds) ? (d.memberIds as string[]) : [],
   };
 }
 
