@@ -61,6 +61,7 @@ export type StoreListing = {
   category: string;
   status: string;
   imageUrl: string | null;
+  imageUrls: string[];
   likedByCount: number;
   createdAt: Date | null;
 };
@@ -220,6 +221,7 @@ export async function fetchUserIndividualPosting(
       category: (data.category as string | undefined) ?? "Other",
       status: (data.status as string | undefined) ?? "active",
       imageUrl: (data.imageUrl as string | undefined) ?? null,
+      imageUrls: Array.isArray(data.imageUrls) ? (data.imageUrls as string[]) : [],
       likedByCount: Array.isArray(data.likedBy) ? data.likedBy.length : 0,
       createdAt: (data.createdAt as Timestamp | undefined)?.toDate() ?? null,
     });
@@ -256,6 +258,7 @@ export function subscribeStoreListings(
             category: (d.category as string | undefined) ?? "Other",
             status: (d.status as string | undefined) ?? "active",
             imageUrl: (d.imageUrl as string | undefined) ?? null,
+            imageUrls: Array.isArray(d.imageUrls) ? (d.imageUrls as string[]) : [],
             likedByCount: Array.isArray(d.likedBy) ? d.likedBy.length : 0,
             createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
           };

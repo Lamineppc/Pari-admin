@@ -9,6 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { StoreStatusBadge } from "./store-status-badge";
 import {
   approveStore,
@@ -56,6 +61,27 @@ export function StoreDetailBody({ store }: { store: Store }) {
   const [busy, setBusy] = useState<Action | null>(null);
   const [listings, setListings] = useState<StoreListing[] | null>(null);
   const [removingListingId, setRemovingListingId] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState<StoreListing | null>(null);
+  const [inspectIndex, setInspectIndex] = useState(0);
+
+  function openInspector(l: StoreListing) {
+    const gallery = l.imageUrls.length > 0
+      ? l.imageUrls
+      : l.imageUrl
+        ? [l.imageUrl]
+        : [];
+    if (gallery.length === 0) return;
+    setInspecting(l);
+    setInspectIndex(0);
+  }
+
+  const inspectGallery = inspecting
+    ? (inspecting.imageUrls.length > 0
+        ? inspecting.imageUrls
+        : inspecting.imageUrl
+          ? [inspecting.imageUrl]
+          : [])
+    : [];
 
   async function handleRemoveListing(l: StoreListing) {
     const why = window.prompt(
@@ -206,12 +232,24 @@ export function StoreDetailBody({ store }: { store: Store }) {
                     className="flex items-center gap-3 border-b p-2 last:border-b-0"
                   >
                     {l.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={l.imageUrl}
-                        alt=""
-                        className="h-10 w-10 rounded object-cover"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => openInspector(l)}
+                        className="relative h-10 w-10 shrink-0 overflow-hidden rounded ring-offset-background transition hover:ring-2 hover:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title="Inspect photos"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={l.imageUrl}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                        {l.imageUrls.length > 1 && (
+                          <span className="absolute bottom-0 right-0 rounded-tl bg-black/60 px-1 text-[9px] font-medium text-white">
+                            {l.imageUrls.length}
+                          </span>
+                        )}
+                      </button>
                     ) : (
                       <div className="h-10 w-10 rounded bg-muted" />
                     )}
@@ -375,6 +413,54 @@ export function StoreDetailBody({ store }: { store: Store }) {
             )}
           </div>
         </div>
+
+        <Dialog
+          open={inspecting !== null}
+          onOpenChange={(open) => {
+            if (!open) setInspecting(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogTitle className="truncate text-sm font-medium">
+              {inspecting?.title || "(no title)"}
+              {inspectGallery.length > 1 && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {inspectIndex + 1} / {inspectGallery.length}
+                </span>
+              )}
+            </DialogTitle>
+            {inspectGallery[inspectIndex] && (
+              <div className="flex flex-col gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={inspectGallery[inspectIndex]}
+                  alt=""
+                  className="max-h-[70vh] w-full rounded object-contain"
+                />
+                {inspectGallery.length > 1 && (
+                  <div className="flex flex-wrap gap-2">
+                    {inspectGallery.map((url, i) => (
+                      <button
+                        key={url + i}
+                        type="button"
+                        onClick={() => setInspectIndex(i)}
+                        className={
+                          "h-14 w-14 shrink-0 overflow-hidden rounded border-2 transition " +
+                          (i === inspectIndex
+                            ? "border-primary"
+                            : "border-transparent hover:border-muted-foreground/40")
+                        }
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
     </div>
   );
 }
