@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -262,6 +263,32 @@ export function subscribeStoreListings(
       ),
     (err) => onError?.(err),
   );
+}
+
+/// Super-admin action: remove a marketplace listing that violates platform
+/// rules. Deletes the doc outright (mobile owner-delete does the same) and
+/// records the audit entry with a required reason string. Firestore rules
+/// permit isSuperAdmin() on the destructive path so this works regardless
+/// of who owns the listing.
+export async function removeMarketplaceListing(
+  listing: Pick<StoreListing, "id" | "title" | "price" | "currency" | "category" | "status">,
+  reason: string,
+): Promise<void> {
+  await deleteDoc(doc(firestore, "marketplace", listing.id));
+  await writeAudit({
+    action: "remove_marketplace_listing",
+    targetType: "listing",
+    targetId: listing.id,
+    test: false,
+    reason: reason || null,
+    before: {
+      title: listing.title,
+      price: listing.price,
+      currency: listing.currency,
+      category: listing.category,
+      status: listing.status,
+    },
+  });
 }
 
 export function computeMetrics(items: StoreListing[]): StoreMetrics {

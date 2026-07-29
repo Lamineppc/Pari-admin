@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronRight, Pause, Play, ShieldOff, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, Pause, Play, ShieldOff, Trash2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +15,7 @@ import {
   computeMetrics,
   reinstateStore,
   rejectStore,
+  removeMarketplaceListing,
   revokeStore,
   setStoreEscalation,
   subscribeStoreListings,
@@ -54,6 +55,29 @@ export function StoreDetailBody({ store }: { store: Store }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<Action | null>(null);
   const [listings, setListings] = useState<StoreListing[] | null>(null);
+  const [removingListingId, setRemovingListingId] = useState<string | null>(null);
+
+  async function handleRemoveListing(l: StoreListing) {
+    const why = window.prompt(
+      `Remove "${l.title || "(untitled)"}" from the marketplace?\n\nEnter a short reason (violates rules, spam, fraud, etc). This is recorded in the audit log.`,
+      "",
+    );
+    if (why === null) return;
+    const trimmed = why.trim();
+    if (trimmed.length < 3) {
+      toast.error("A reason of at least 3 characters is required.");
+      return;
+    }
+    setRemovingListingId(l.id);
+    try {
+      await removeMarketplaceListing(l, trimmed);
+      toast.success("Listing removed.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove listing.");
+    } finally {
+      setRemovingListingId(null);
+    }
+  }
 
   useEffect(() => {
     setReason("");
@@ -210,6 +234,16 @@ export function StoreDetailBody({ store }: { store: Store }) {
                     <Badge variant="outline" className="text-[10px]">
                       {l.status}
                     </Badge>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      title="Remove listing (super admin)"
+                      disabled={removingListingId === l.id}
+                      onClick={() => handleRemoveListing(l)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 ))}
               </div>

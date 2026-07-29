@@ -107,7 +107,8 @@ export type AuditAction =
   | "grant_courier_role"
   | "revoke_courier_role"
   | "set_platform_config"
-  | "pay_out_order";
+  | "pay_out_order"
+  | "remove_marketplace_listing";
 
 export type AuditTargetType =
   | "group"
@@ -116,7 +117,8 @@ export type AuditTargetType =
   | "wallet"
   | "cycle"
   | "platform"
-  | "order";
+  | "order"
+  | "listing";
 
 export type AuditPhase = "prelaunch" | "live";
 
