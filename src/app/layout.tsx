@@ -18,6 +18,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Pari Admin",
   description: "Super-admin panel for the Pari tontine platform.",
+  icons: {
+    icon: "/pari-icon.png",
+    shortcut: "/pari-icon.png",
+    apple: "/pari-icon.png",
+  },
 };
 
 export default function RootLayout({
