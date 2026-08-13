@@ -12,11 +12,44 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type QueryDocumentSnapshot,
   type Timestamp,
 } from "firebase/firestore";
 import { firebaseAuth, firestore } from "./firebase";
 import { writeAudit } from "./audit";
+
+/// Flip each listing referenced by the order to a specific status.
+/// Used to mark listings 'sold' at quote time and revert them to
+/// 'active' if the order is cancelled or refunded. Skips missing
+/// listings and skips no-op transitions so repeats are safe.
+async function _setListingsStatus(
+  orderId: string,
+  targetStatus: "sold" | "active",
+): Promise<void> {
+  const orderSnap = await getDoc(doc(firestore, "orders", orderId));
+  if (!orderSnap.exists()) return;
+  const lines = (orderSnap.data().lines as Array<Record<string, unknown>>) ?? [];
+  const listingIds = Array.from(
+    new Set(
+      lines
+        .map((l) => String(l.listingId ?? ""))
+        .filter((id) => id.length > 0),
+    ),
+  );
+  if (listingIds.length === 0) return;
+  const batch = writeBatch(firestore);
+  let writes = 0;
+  for (const id of listingIds) {
+    const ref = doc(firestore, "marketplace", id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) continue;
+    if (snap.data().status === targetStatus) continue;
+    batch.update(ref, { status: targetStatus });
+    writes++;
+  }
+  if (writes > 0) await batch.commit();
+}
 
 /// Mirrors the mobile MarketplaceOrder model exactly.
 export type OrderStatus =
@@ -228,6 +261,11 @@ export async function quoteOrder(
     status: "quoted",
     quotedAt: serverTimestamp(),
   });
+  // Once we've quoted, the item is committed to this buyer — flip
+  // each listing to 'sold' so store metrics reflect reality and the
+  // listing drops off the public marketplace. Reverted in
+  // cancelOrder / refundOrder if the deal falls through.
+  await _setListingsStatus(orderId, "sold");
   await writeAudit({
     action: "quote_order",
     targetType: "order",
@@ -418,6 +456,7 @@ export async function cancelOrder(orderId: string, reason?: string): Promise<voi
     cancelledAt: serverTimestamp(),
     cancelReason: reason ?? null,
   });
+  await _setListingsStatus(orderId, "active");
   await writeAudit({
     action: "cancel_order",
     targetType: "order",
@@ -596,6 +635,11 @@ export async function refundOrder(orderId: string, reason?: string): Promise<voi
       refundReason: reason ?? null,
     });
   });
+  // If we're refunding a paid-but-not-shipped order, put the listing
+  // back on the market. Post-transit refunds still revert so store
+  // metrics don't leave a stale 'sold' item; the seller can manually
+  // remove it if they don't have physical stock left.
+  await _setListingsStatus(orderId, "active");
   await writeAudit({
     action: "refund_order",
     targetType: "order",
