@@ -108,6 +108,7 @@ export type AuditAction =
   | "revoke_courier_role"
   | "set_platform_config"
   | "pay_out_order"
+  | "record_cash_collected"
   | "remove_marketplace_listing";
 
 export type AuditTargetType =

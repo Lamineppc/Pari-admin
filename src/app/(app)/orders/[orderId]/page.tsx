@@ -18,6 +18,7 @@ import {
   listCouriers,
   payOutOrderToSeller,
   quoteOrder,
+  recordCashCollected,
   refundOrder,
   subscribeOrder,
   subscribeOrderPins,
@@ -270,6 +271,9 @@ export default function OrderDetailPage() {
             </div>
           </section>
         )}
+      {order.paymentMethod === "cash" && (
+        <CashPanel order={order} />
+      )}
       {order.status === "delivered" && <DeliveredPanel order={order} />}
       {order.status === "paid_out" && (
         <div className="rounded-md border p-4 text-sm text-muted-foreground">
@@ -578,6 +582,63 @@ function InTransitPanel({
           />
         )}
       </div>
+    </section>
+  );
+}
+
+function CashPanel({ order }: { order: MarketplaceOrder }) {
+  const [busy, setBusy] = useState(false);
+  const collected = order.cashCollectedAt != null;
+  const canRecord = order.status === "delivered" && !collected;
+  async function submit() {
+    if (
+      !window.confirm(
+        `Record that ${order.currency} ${(itemsSubtotal(order) + (order.deliveryFee ?? 0)).toLocaleString()} was collected in cash?`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await recordCashCollected(order.id);
+      toast.success("Cash collection recorded.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="rounded-md border p-4">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Cash on delivery
+      </div>
+      {collected ? (
+        <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm dark:border-green-900 dark:bg-green-950/40">
+          <div className="font-medium text-green-800 dark:text-green-200">
+            Cash collected {fmtDate(order.cashCollectedAt)}
+          </div>
+          <div className="mt-1 text-xs text-green-700 dark:text-green-300">
+            Total collected: {order.currency}{" "}
+            {(itemsSubtotal(order) + (order.deliveryFee ?? 0)).toLocaleString()}
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Buyer chose cash payment. Courier collects{" "}
+            {order.currency}{" "}
+            {(itemsSubtotal(order) + (order.deliveryFee ?? 0)).toLocaleString()}{" "}
+            at drop-off.{" "}
+            {canRecord
+              ? "You can record collection here if the courier didn't do it in the app."
+              : "Recording unlocks once the courier confirms delivery."}
+          </p>
+          <Button size="sm" disabled={!canRecord || busy} onClick={submit}>
+            {busy ? "Saving…" : "Record cash collected"}
+          </Button>
+        </>
+      )}
     </section>
   );
 }

@@ -58,6 +58,7 @@ export type MarketplaceOrder = {
   status: OrderStatus;
   deliveryFee: number | null;
   platformFeePercent: number | null;
+  paymentMethod: "cash" | "mobile_money" | null;
   courierId: string | null;
   createdAt: Date | null;
   awaitingPickupAt: Date | null;
@@ -67,6 +68,7 @@ export type MarketplaceOrder = {
   deliveredAt: Date | null;
   paidOutAt: Date | null;
   cancelledAt: Date | null;
+  cashCollectedAt: Date | null;
 };
 
 function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
@@ -106,6 +108,8 @@ function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
     status: (d.status as OrderStatus | undefined) ?? "awaiting_quote",
     deliveryFee: (d.deliveryFee as number | undefined) ?? null,
     platformFeePercent: (d.platformFeePercent as number | undefined) ?? null,
+    paymentMethod:
+      (d.paymentMethod as "cash" | "mobile_money" | undefined) ?? null,
     courierId: (d.courierId as string | undefined) ?? null,
     createdAt: (d.createdAt as Timestamp | undefined)?.toDate() ?? null,
     awaitingPickupAt:
@@ -116,6 +120,8 @@ function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
     deliveredAt: (d.deliveredAt as Timestamp | undefined)?.toDate() ?? null,
     paidOutAt: (d.paidOutAt as Timestamp | undefined)?.toDate() ?? null,
     cancelledAt: (d.cancelledAt as Timestamp | undefined)?.toDate() ?? null,
+    cashCollectedAt:
+      (d.cashCollectedAt as Timestamp | undefined)?.toDate() ?? null,
   };
 }
 
@@ -373,6 +379,34 @@ export async function assignCourierAndIssuePin(
     );
   }
   return { pin, pickupPin };
+}
+
+/// Record that cash was collected (for a cash-on-delivery order).
+/// Admin-side counterpart to the courier button — useful if the
+/// courier forgot to record it in the app.
+export async function recordCashCollected(orderId: string): Promise<void> {
+  const orderRef = doc(firestore, "orders", orderId);
+  const orderSnap = await getDoc(orderRef);
+  if (!orderSnap.exists()) throw new Error("Order not found.");
+  const data = orderSnap.data();
+  if (data.paymentMethod !== "cash") {
+    throw new Error("This order is not a cash order.");
+  }
+  if (data.status !== "delivered") {
+    throw new Error("Cash can only be recorded after delivery.");
+  }
+  if (data.cashCollectedAt) {
+    throw new Error("Cash has already been recorded.");
+  }
+  await updateDoc(orderRef, {
+    cashCollectedAt: serverTimestamp(),
+  });
+  await writeAudit({
+    action: "record_cash_collected",
+    targetType: "order",
+    targetId: orderId,
+    test: false,
+  });
 }
 
 /// Super-admin cancel — allowed at any pre-delivered state. Refunds
