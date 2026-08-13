@@ -233,7 +233,9 @@ export default function OrderDetailPage() {
 
       <Separator />
 
-      {order.status === "awaiting_quote" && <QuotePanel order={order} />}
+      {(order.status === "awaiting_quote" || order.status === "quoted") && (
+        <QuotePanel order={order} />
+      )}
       {(order.status === "paid" ||
         order.status === "awaiting_pickup" ||
         order.status === "in_transit") && (
@@ -304,7 +306,10 @@ export default function OrderDetailPage() {
 }
 
 function QuotePanel({ order }: { order: MarketplaceOrder }) {
-  const [fee, setFee] = useState("");
+  const isEdit = order.status === "quoted";
+  const [fee, setFee] = useState(
+    isEdit && order.deliveryFee != null ? String(order.deliveryFee) : "",
+  );
   const [busy, setBusy] = useState(false);
   async function submit() {
     const n = Number(fee);
@@ -312,10 +317,14 @@ function QuotePanel({ order }: { order: MarketplaceOrder }) {
       toast.error("Enter a non-negative delivery fee.");
       return;
     }
+    if (isEdit && n === order.deliveryFee) {
+      toast.error("New fee is the same as the current quote.");
+      return;
+    }
     setBusy(true);
     try {
       await quoteOrder(order.id, n);
-      toast.success("Quote sent to buyer.");
+      toast.success(isEdit ? "Quote updated. Buyer notified." : "Quote sent to buyer.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Quote failed.");
     } finally {
@@ -325,12 +334,12 @@ function QuotePanel({ order }: { order: MarketplaceOrder }) {
   return (
     <section className="rounded-md border p-4">
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Quote delivery
+        {isEdit ? "Edit delivery quote" : "Quote delivery"}
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        Decide the delivery fee based on the buyer&apos;s destination vs the
-        seller&apos;s location. The buyer will get a notification with the
-        quote and pay to confirm.
+        {isEdit
+          ? `Current quote: ${order.currency} ${(order.deliveryFee ?? 0).toLocaleString()}. Change the fee if it was wrong — the buyer will be re-notified and must accept the new amount before paying.`
+          : "Decide the delivery fee based on the buyer's destination vs the seller's location. The buyer will get a notification with the quote and pay to confirm."}
       </p>
       <div className="flex items-center gap-2">
         <label className="w-32 text-xs text-muted-foreground">
@@ -343,7 +352,7 @@ function QuotePanel({ order }: { order: MarketplaceOrder }) {
           placeholder="1000"
         />
         <Button size="sm" disabled={busy} onClick={submit}>
-          {busy ? "Sending…" : "Send quote"}
+          {busy ? "Sending…" : isEdit ? "Update quote" : "Send quote"}
         </Button>
       </div>
     </section>
