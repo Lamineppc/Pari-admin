@@ -508,6 +508,10 @@ export default function GroupDetailPage() {
 
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
         <Field label="Status" value={isActive ? "Active" : "Inactive"} />
+        <Field
+          label="Rotation"
+          value={group.positionsLocked ? "Started (Prêt pressed)" : "Not started"}
+        />
         <Field label="Members" value={String(group.memberCount)} />
         <Field label="Contribution" value={fmtCurrency(group.amount, group.currency)} />
         <Field label="Frequency" value={group.frequency} />
