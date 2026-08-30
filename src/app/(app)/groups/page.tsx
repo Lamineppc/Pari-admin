@@ -26,6 +26,7 @@ export default function GroupsPage() {
   const router = useRouter();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [q, setQ] = useState("");
+  const [flavor, setFlavor] = useState<"all" | "pari" | "global">("all");
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -43,17 +44,32 @@ export default function GroupsPage() {
     if (sel) router.replace(`/groups/${sel}`);
   }, [searchParams, router]);
 
+  const flavorCounts = useMemo(() => {
+    const c = { all: 0, pari: 0, global: 0 };
+    if (!groups) return c;
+    for (const g of groups) {
+      c.all++;
+      if (g.global) c.global++;
+      else c.pari++;
+    }
+    return c;
+  }, [groups]);
+
   const filtered = useMemo(() => {
     if (!groups) return null;
     const needle = q.trim().toLowerCase();
-    if (!needle) return groups;
-    return groups.filter(
+    const byFlavor =
+      flavor === "all"
+        ? groups
+        : groups.filter((g) => (flavor === "global" ? g.global : !g.global));
+    if (!needle) return byFlavor;
+    return byFlavor.filter(
       (g) =>
         g.name.toLowerCase().includes(needle) ||
         g.id.toLowerCase().includes(needle) ||
         g.createdBy.toLowerCase().includes(needle),
     );
-  }, [groups, q]);
+  }, [groups, q, flavor]);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -90,14 +106,35 @@ export default function GroupsPage() {
           </Button>
           <NewMockGroupDialog onCreated={(id) => router.push(`/groups/${id}`)} />
         </div>
-        <div className="relative max-w-sm">
-          <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by name, id, or admin uid…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative max-w-sm flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, id, or admin uid…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <div className="inline-flex rounded-md border p-0.5">
+            {(["all", "pari", "global"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFlavor(f)}
+                className={`rounded px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                  flavor === f
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {f}
+                <span className="ml-1.5 text-[10px] text-muted-foreground tabular-nums">
+                  {flavorCounts[f]}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 

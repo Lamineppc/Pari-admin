@@ -64,6 +64,9 @@ export type Group = {
   // platform wallet. Defaults to 0 for legacy groups.
   penaltyPerMissedCycle: number;
   useSlots: boolean;
+  // True when the group was created from the Global Flutter flavor.
+  // Null/absent on legacy docs — treated as false (pari flavor).
+  global: boolean;
 };
 
 function toGroup(snap: QueryDocumentSnapshot): Group {
@@ -92,6 +95,7 @@ function toGroup(snap: QueryDocumentSnapshot): Group {
       (d.moneyProvider as "mock" | "orange_money" | undefined) ?? null,
     penaltyPerMissedCycle: Number(d.penaltyPerMissedCycle ?? 0),
     useSlots: Boolean(d.useSlots ?? false),
+    global: Boolean(d.global ?? false),
   };
 }
 
