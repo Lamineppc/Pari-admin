@@ -166,8 +166,22 @@ export default function OrderDetailPage() {
           {order.lines.map((l) => (
             <div
               key={l.listingId}
-              className="flex items-center justify-between p-4 text-sm"
+              className="flex items-center gap-3 p-4 text-sm"
             >
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                {l.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={l.imageUrl}
+                    alt={l.title}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-[10px] uppercase text-muted-foreground">
+                    No image
+                  </span>
+                )}
+              </div>
               <div className="flex-1 truncate">
                 {l.quantity} × {l.title}
               </div>
