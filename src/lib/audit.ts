@@ -104,6 +104,7 @@ export type AuditAction =
   | "assign_courier_and_issue_pin"
   | "cancel_order"
   | "refund_order"
+  | "resync_listing_statuses"
   | "grant_courier_role"
   | "revoke_courier_role"
   | "set_platform_config"

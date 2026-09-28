@@ -13,9 +13,11 @@ import { Badge } from "@/components/ui/badge";
 import {
   assignCourierAndIssuePin,
   cancelOrder,
+  fetchListingImageUrls,
   isPayoutReady,
   itemsSubtotal,
   listCouriers,
+  resyncOrderListingStatuses,
   payOutOrderToSeller,
   quoteOrder,
   recordCashCollected,
@@ -65,11 +67,30 @@ export default function OrderDetailPage() {
     deliveryPin: string | null;
     pickupPin: string | null;
   }>({ deliveryPin: null, pickupPin: null });
+  const [fallbackImages, setFallbackImages] = useState<
+    Record<string, string | null>
+  >({});
 
   useEffect(() => {
     if (!orderId) return;
     return subscribeOrderPins(orderId, setPins);
   }, [orderId]);
+
+  useEffect(() => {
+    if (!order) return;
+    const missing = order.lines
+      .filter((l) => !l.imageUrl && !(l.listingId in fallbackImages))
+      .map((l) => l.listingId);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    fetchListingImageUrls(missing).then((map) => {
+      if (cancelled) return;
+      setFallbackImages((prev) => ({ ...prev, ...map }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [order, fallbackImages]);
 
   useEffect(() => {
     if (!orderId) return;
@@ -115,9 +136,12 @@ export default function OrderDetailPage() {
               Placed {fmtDate(order.createdAt)}
             </p>
           </div>
-          <Badge variant="outline" className="text-xs">
-            {statusLabel(order.status)}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <ResyncListingsButton order={order} />
+            <Badge variant="outline" className="text-xs">
+              {statusLabel(order.status)}
+            </Badge>
+          </div>
         </div>
       </header>
 
@@ -169,18 +193,24 @@ export default function OrderDetailPage() {
               className="flex items-center gap-3 p-4 text-sm"
             >
               <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
-                {l.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={l.imageUrl}
-                    alt={l.title}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="text-[10px] uppercase text-muted-foreground">
-                    No image
-                  </span>
-                )}
+                {(() => {
+                  const src = l.imageUrl ?? fallbackImages[l.listingId] ?? null;
+                  if (!src) {
+                    return (
+                      <span className="text-[10px] uppercase text-muted-foreground">
+                        No image
+                      </span>
+                    );
+                  }
+                  return (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt={l.title}
+                      className="h-full w-full object-cover"
+                    />
+                  );
+                })()}
               </div>
               <div className="flex-1 truncate">
                 {l.quantity} × {l.title}
@@ -822,6 +852,26 @@ function RefundButton({ orderId }: { orderId: string }) {
       onClick={run}
     >
       <Undo2 className="mr-1 h-4 w-4" /> Refund order
+    </Button>
+  );
+}
+
+function ResyncListingsButton({ order }: { order: MarketplaceOrder }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const { target } = await resyncOrderListingStatuses(order);
+      toast.success(`Listings marked ${target}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button variant="outline" size="sm" disabled={busy} onClick={run}>
+      Re-sync listings
     </Button>
   );
 }

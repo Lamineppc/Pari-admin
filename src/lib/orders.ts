@@ -158,6 +158,56 @@ function toOrder(snap: QueryDocumentSnapshot): MarketplaceOrder {
   };
 }
 
+export async function fetchListingImageUrls(
+  listingIds: string[],
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  const ids = Array.from(new Set(listingIds));
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const snap = await getDoc(doc(firestore, "marketplace", id));
+        if (!snap.exists()) {
+          out[id] = null;
+          return;
+        }
+        const d = snap.data();
+        const single = (d.imageUrl as string | undefined) ?? null;
+        const arr = (d.imageUrls as unknown[] | undefined) ?? [];
+        const first =
+          arr.length > 0 && typeof arr[0] === "string"
+            ? (arr[0] as string)
+            : null;
+        out[id] = single ?? first ?? null;
+      } catch {
+        out[id] = null;
+      }
+    }),
+  );
+  return out;
+}
+
+/// Re-run the listing-status flip for an existing order. Marks each
+/// referenced listing 'sold' unless the order is cancelled/refunded,
+/// in which case it reverts them to 'active'. Safe to call repeatedly.
+export async function resyncOrderListingStatuses(
+  order: Pick<MarketplaceOrder, "id" | "status">,
+): Promise<{ target: "sold" | "active" }> {
+  const target: "sold" | "active" =
+    order.status === "cancelled" || order.status === "refunded"
+      ? "active"
+      : "sold";
+  await _setListingsStatus(order.id, target);
+  await writeAudit({
+    action: "resync_listing_statuses",
+    targetType: "order",
+    targetId: order.id,
+    test: false,
+    after: { target, orderStatus: order.status },
+  });
+  return { target };
+}
+
 export function itemsSubtotal(o: Pick<MarketplaceOrder, "lines">): number {
   return o.lines.reduce((total, l) => total + l.price * l.quantity, 0);
 }
