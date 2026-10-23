@@ -486,14 +486,32 @@ export async function recordCashCollected(orderId: string): Promise<void> {
   if (data.cashCollectedAt) {
     throw new Error("Cash has already been recorded.");
   }
-  await updateDoc(orderRef, {
-    cashCollectedAt: serverTimestamp(),
+
+  const currency = String(data.currency ?? "CFA").toLowerCase();
+  const items = ((data.lines as Array<Record<string, unknown>>) ?? []).reduce(
+    (t, l) => t + Number(l.price ?? 0) * Number(l.quantity ?? 1),
+    0,
+  );
+  const escrowRef = doc(firestore, "mockWallets", `mkt_escrow_${currency}`);
+  await runTransaction(firestore, async (tx) => {
+    const eSnap = await tx.get(escrowRef);
+    const eBal = Number(eSnap.data()?.balance ?? 0);
+    tx.set(escrowRef, {
+      balance: eBal + items,
+      currency: currency.toUpperCase(),
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(orderRef, {
+      cashCollectedAt: serverTimestamp(),
+    });
   });
+
   await writeAudit({
     action: "record_cash_collected",
     targetType: "order",
     targetId: orderId,
     test: false,
+    after: { escrowCredited: items, currency: currency.toUpperCase() },
   });
 }
 
