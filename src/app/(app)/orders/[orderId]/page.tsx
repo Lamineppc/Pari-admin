@@ -245,9 +245,27 @@ export default function OrderDetailPage() {
             </div>
           )}
           {order.platformFeePercent != null && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Platform fee at payment: {order.platformFeePercent}%
-            </div>
+            <>
+              <div className="mt-2 flex justify-between text-sm text-muted-foreground">
+                <span>Platform commission ({order.platformFeePercent}%)</span>
+                <span className="tabular-nums">
+                  − {order.currency}{" "}
+                  {Math.round(
+                    (subtotal * order.platformFeePercent) / 100,
+                  ).toLocaleString()}
+                </span>
+              </div>
+              <div className="mt-1 flex justify-between text-sm font-medium">
+                <span>Seller receives</span>
+                <span className="tabular-nums">
+                  {order.currency}{" "}
+                  {(
+                    subtotal -
+                    Math.round((subtotal * order.platformFeePercent) / 100)
+                  ).toLocaleString()}
+                </span>
+              </div>
+            </>
           )}
         </div>
       </section>
